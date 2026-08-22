@@ -16,6 +16,10 @@ def _app(tmp_path, monkeypatch):
 
 
 def test_upload_valid_audio_creates_meeting(tmp_path, monkeypatch):
+    # The background task fires synchronously inside TestClient and would try
+    # a real Groq() client if a key were present in the environment. Force it
+    # unset so this stays hermetic regardless of the developer's local .env.
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
     content = b"ID3" + b"\x00" * 100
 
     with TestClient(_app(tmp_path, monkeypatch)) as client:
@@ -26,7 +30,7 @@ def test_upload_valid_audio_creates_meeting(tmp_path, monkeypatch):
 
     assert response.status_code == 201
     body = response.json()
-    assert body["status"] == MeetingStatus.UPLOADED
+    assert body["status"] == MeetingStatus.QUEUED
     assert "id" in body
 
 
