@@ -9,7 +9,7 @@ that were made, and a list of action items with owners and deadlines.
 
 - [x] Phase 1 — repository skeleton, dependencies, CI
 - [x] Phase 2 — FastAPI app + SQLite persistence
-- [ ] Phase 3 — audio upload API + validation
+- [x] Phase 3 — audio upload API + validation
 - [ ] Phase 4 — background processing
 - [ ] Phase 5 — ASR integration
 - [ ] Phase 6 — LLM summarization
@@ -31,7 +31,10 @@ frontend build step — see [Why no queue or cache](#why-no-queue-or-cache).
 backend/app/
 ├── main.py              # FastAPI app + startup
 ├── api/
-│   └── health.py
+│   ├── health.py
+│   └── meetings.py       # POST /api/v1/meetings — upload + validate
+├── services/
+│   └── storage_service.py  # extension/signature/size checks, content-addressed storage
 ├── database/
 │   ├── connection.py    # sqlite3 connection helper
 │   ├── init_db.py       # schema creation
@@ -41,7 +44,6 @@ backend/app/
 ├── core/
 │   ├── config.py         # env-driven settings, no python-dotenv
 │   └── logging.py
-├── services/              # ASR / summarization / processing (later phases)
 ├── schemas/                # request/response models (later phases)
 └── utils/
 frontend/                  # plain HTML/CSS/JS (later phase)
@@ -62,6 +64,20 @@ uvicorn backend.app.main:app --reload
 
 Open <http://127.0.0.1:8000/health> — should return `{"status": "ok", "database": "ok"}`.
 Interactive API docs at <http://127.0.0.1:8000/docs>.
+
+## API
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| `GET` | `/health` | Liveness + a real SQLite round-trip |
+| `POST` | `/api/v1/meetings` | Upload audio (multipart, field `audio`) → `201` + `{id, status}` |
+
+Accepted formats: `.mp3`, `.wav`, `.m4a` — checked by extension, declared
+content type, and a byte-signature sniff of the file itself, since the
+brief specifically says not to trust the filename. Files are stored under
+their own sha256 hash rather than the client-supplied name, which also
+gives free dedupe: uploading identical content twice reuses the file on
+disk instead of writing it again.
 
 ## Tests
 
