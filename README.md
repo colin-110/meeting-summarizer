@@ -10,8 +10,8 @@ that were made, and a list of action items with owners and deadlines.
 - [x] Phase 1 — repository skeleton, dependencies, CI
 - [x] Phase 2 — FastAPI app + SQLite persistence
 - [x] Phase 3 — audio upload API + validation
-- [ ] Phase 4 — background processing
-- [ ] Phase 5 — ASR integration
+- [x] Phase 4 — background processing
+- [x] Phase 5 — ASR integration (Groq Whisper)
 - [ ] Phase 6 — LLM summarization
 - [ ] Phase 7 — result/status APIs
 - [ ] Phase 8 — frontend
@@ -34,7 +34,10 @@ backend/app/
 │   ├── health.py
 │   └── meetings.py       # POST /api/v1/meetings — upload + validate
 ├── services/
-│   └── storage_service.py  # extension/signature/size checks, content-addressed storage
+│   ├── storage_service.py        # extension/signature/size checks, content-addressed storage
+│   ├── processing_service.py     # orchestrates one meeting: transcribe -> summarize -> persist
+│   ├── transcription_service.py  # Groq Whisper, isolated so the provider can change later
+│   └── summarization_service.py  # stub — real LLM summarization lands in its own phase
 ├── database/
 │   ├── connection.py    # sqlite3 connection helper
 │   ├── init_db.py       # schema creation
@@ -46,6 +49,7 @@ backend/app/
 │   └── logging.py
 ├── schemas/                # request/response models (later phases)
 └── utils/
+    └── retry.py           # retry helper for transient provider errors
 frontend/                  # plain HTML/CSS/JS (later phase)
 tests/
 ```
@@ -57,7 +61,8 @@ python -m venv .venv
 .venv\Scripts\Activate.ps1        # Windows PowerShell
 pip install -r requirements-dev.txt
 
-cp .env.example .env              # optional — defaults work as-is
+cp .env.example .env
+# then add GROQ_API_KEY=gsk_... to .env — free tier at https://console.groq.com
 
 uvicorn backend.app.main:app --reload
 ```
