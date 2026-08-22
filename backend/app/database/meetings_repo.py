@@ -1,0 +1,152 @@
+"""CRUD against the `meetings` table.
+
+Every function takes an optional db_path override so tests can point
+at an isolated temp database instead of the real data/app.db.
+"""
+
+import json
+import sqlite3
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Optional
+
+from backend.app.database.connection import get_connection
+from backend.app.models.meeting import Meeting, MeetingStatus
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _row_to_meeting(row: sqlite3.Row) -> Meeting:
+    return Meeting(
+        id=row["id"],
+        filename=row["filename"],
+        file_hash=row["file_hash"],
+        audio_path=row["audio_path"],
+        status=row["status"],
+        transcript=row["transcript"],
+        summary=row["summary"],
+        key_decisions=json.loads(row["key_decisions"]) if row["key_decisions"] else [],
+        action_items=json.loads(row["action_items"]) if row["action_items"] else [],
+        error_message=row["error_message"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+        processing_started_at=row["processing_started_at"],
+        processing_completed_at=row["processing_completed_at"],
+    )
+
+
+def create_meeting(
+    filename: str,
+    file_hash: str,
+    audio_path: str,
+    db_path: Optional[Path] = None,
+) -> Meeting:
+    meeting_id = uuid.uuid4().hex
+    now = _now()
+    conn = get_connection(db_path)
+    try:
+        conn.execute(
+            """
+            INSERT INTO meetings (id, filename, file_hash, audio_path, status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (meeting_id, filename, file_hash, audio_path, MeetingStatus.UPLOADED, now, now),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return get_meeting(meeting_id, db_path)
+
+
+def get_meeting(meeting_id: str, db_path: Optional[Path] = None) -> Optional[Meeting]:
+    conn = get_connection(db_path)
+    try:
+        row = conn.execute("SELECT * FROM meetings WHERE id = ?", (meeting_id,)).fetchone()
+    finally:
+        conn.close()
+    return _row_to_meeting(row) if row else None
+
+
+def list_meetings(db_path: Optional[Path] = None) -> list[Meeting]:
+    conn = get_connection(db_path)
+    try:
+        rows = conn.execute("SELECT * FROM meetings ORDER BY created_at DESC").fetchall()
+    finally:
+        conn.close()
+    return [_row_to_meeting(row) for row in rows]
+
+
+def find_completed_by_hash(file_hash: str, db_path: Optional[Path] = None) -> Optional[Meeting]:
+    conn = get_connection(db_path)
+    try:
+        row = conn.execute(
+            "SELECT * FROM meetings WHERE file_hash = ? AND status = ? ORDER BY created_at DESC LIMIT 1",
+            (file_hash, MeetingStatus.COMPLETED),
+        ).fetchone()
+    finally:
+        conn.close()
+    return _row_to_meeting(row) if row else None
+
+
+def update_status(
+    meeting_id: str,
+    status: str,
+    *,
+    error_message: Optional[str] = None,
+    db_path: Optional[Path] = None,
+) -> None:
+    conn = get_connection(db_path)
+    try:
+        fields = ["status = ?", "updated_at = ?"]
+        values: list = [status, _now()]
+        if status == MeetingStatus.PROCESSING:
+            fields.append("processing_started_at = ?")
+            values.append(_now())
+        if status in (MeetingStatus.COMPLETED, MeetingStatus.FAILED):
+            fields.append("processing_completed_at = ?")
+            values.append(_now())
+        if error_message is not None:
+            fields.append("error_message = ?")
+            values.append(error_message)
+        values.append(meeting_id)
+        conn.execute(f"UPDATE meetings SET {', '.join(fields)} WHERE id = ?", values)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def save_transcript(meeting_id: str, transcript: str, db_path: Optional[Path] = None) -> None:
+    conn = get_connection(db_path)
+    try:
+        conn.execute(
+            "UPDATE meetings SET transcript = ?, updated_at = ? WHERE id = ?",
+            (transcript, _now(), meeting_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def save_summary(
+    meeting_id: str,
+    summary: str,
+    key_decisions: list,
+    action_items: list,
+    db_path: Optional[Path] = None,
+) -> None:
+    conn = get_connection(db_path)
+    try:
+        conn.execute(
+            """
+            UPDATE meetings
+            SET summary = ?, key_decisions = ?, action_items = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (summary, json.dumps(key_decisions), json.dumps(action_items), _now(), meeting_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
