@@ -127,6 +127,47 @@ triggered by a real recording, but because nothing was stopping a
 pathological input (a multi-hour transcript, or one that isn't real
 speech) from producing an unbounded prompt.
 
+## What the golden-set eval found — and which fixes were real
+
+Building `eval/run_accuracy_eval.py` (see [README: Accuracy
+evaluation](README.md#accuracy-evaluation)) surfaced two things, and it's
+worth being precise about which one was a real model limitation and which
+one wasn't — conflating them would mean "fixing" a measurement bug and
+claiming it as a model improvement.
+
+- **Not a real error: number/date formatting.** The first golden scripts
+  spelled out times and dates as words ("nine thirty a.m.", "the
+  fifteenth"). Whisper transcribed what it heard correctly, just in digit
+  form ("9:30am", "the 15th") — which the WER calculation then penalized
+  as a mismatch. This was a bug in the eval's reference text, not a
+  transcription failure. Rewriting the scripts in digit form (matching how
+  people actually write times/dates) dropped measured average WER from
+  3.2% to ~1.8% with zero change to the model or the pipeline — the
+  transcription was already that accurate; the first measurement just
+  wasn't measuring it correctly.
+- **A real gap: `open_questions` under-captured deferred topics.** A
+  fourth, harder golden case (`incident_review`) included a topic the
+  group explicitly deferred ("that's a bigger discussion for later")
+  without phrasing it as a question. The model sometimes dropped it
+  entirely — not filed as a decision, action item, *or* open question,
+  just silently absent. Taking `open_questions`'s original description
+  ("unresolved questions... raised but did not answer") literally, that's
+  arguably correct behavior — a deferred statement isn't a question. So
+  the actual fix was broadening what the field is *for*: the schema
+  description and prompt rule 7 now explicitly cover "a topic the group
+  explicitly deferred or postponed," not just literal unanswered
+  questions. This is a genuine prompt-design fix, not a measurement
+  correction — it changes what the model is asked to do, not just how
+  the result gets scored.
+
+Repeating the eval 3 times after both fixes: decision recall and action
+item recall were perfect on all 3 runs (18/18, 21/21), but open-question
+recall was 14/15 — one run dropped an item that the other two runs
+captured. `gpt-oss-120b` is called at `temperature=0.2`, not `0`, so this
+is expected, real, and reported as-is rather than cherry-picking the best
+run — a single successful run of a non-deterministic system proves less
+than a middling result reported honestly.
+
 ## Frontend iteration
 
 The first frontend pass put "Summarize another meeting" at the bottom of
