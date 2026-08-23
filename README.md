@@ -14,9 +14,9 @@ that were made, and a list of action items with owners and deadlines.
 - [x] Phase 5 — ASR integration (Groq Whisper)
 - [x] Phase 6 — LLM summarization (Groq gpt-oss-120b, strict JSON schema)
 - [x] Phase 7 — result/status APIs
-- [ ] Phase 8 — frontend
-- [ ] Phase 9 — file-hash dedupe
-- [ ] Phase 10 — validation, retries, error handling
+- [x] Phase 8 — frontend
+- [x] Phase 9 — file-hash dedupe *(landed inside Phases 2 &amp; 4, not a separate step)*
+- [x] Phase 10 — validation, retries, error handling *(built incrementally alongside Phases 3, 5, 6 rather than as one pass — see [Error handling & edge cases](#error-handling--edge-cases))*
 - [ ] Phase 11+ — docs, demo video, cleanup
 
 ## Stack
@@ -52,7 +52,10 @@ backend/app/
 └── utils/
     ├── retry.py           # retry helper for transient provider errors
     └── errors.py          # extracts a clean message from a provider exception
-frontend/                  # plain HTML/CSS/JS (later phase)
+frontend/
+├── index.html            # upload form + status/result/error views
+├── style.css
+└── app.js                # upload -> poll status -> render result, plus history
 tests/
 ```
 
@@ -69,8 +72,10 @@ cp .env.example .env
 uvicorn backend.app.main:app --reload
 ```
 
-Open <http://127.0.0.1:8000/health> — should return `{"status": "ok", "database": "ok"}`.
-Interactive API docs at <http://127.0.0.1:8000/docs>.
+Open <http://127.0.0.1:8000> for the app itself, or
+<http://127.0.0.1:8000/health> for a liveness check
+(`{"status": "ok", "database": "ok"}`). Interactive API docs at
+<http://127.0.0.1:8000/docs>.
 
 ## API
 
@@ -110,6 +115,21 @@ distinctions that go wrong most often in meeting notes:
   invented date
 - the summary is a briefing for someone who missed the meeting, not a
   restatement of the transcript
+
+## Frontend
+
+Plain HTML/CSS/vanilla JS — no React, no build step, no `node_modules`.
+FastAPI serves it directly via `StaticFiles` (mounted at `/`, after the API
+routers so it never shadows them), so the whole app is one process on one
+port.
+
+Upload a file and `app.js` polls `/status` every 2 seconds, moving through
+`Queued… → Processing… → ` a rendered result — summary, key decisions, a
+checklist of action items with owner and deadline, and the transcript
+behind a `<details>` toggle. A failure shows the actual `error_message`
+from the API, not a generic "something went wrong." A "Recent meetings"
+list at the bottom reuses `GET /api/v1/meetings` to let you reopen any
+past result (or re-check one still processing) without re-uploading.
 
 ## Error handling & edge cases
 

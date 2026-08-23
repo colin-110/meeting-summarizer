@@ -1,7 +1,9 @@
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from backend.app.api.health import router as health_router
 from backend.app.api.meetings import router as meetings_router
@@ -10,6 +12,8 @@ from backend.app.database.init_db import init_db
 
 configure_logging()
 log = get_logger(__name__)
+
+_FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
 
 
 @asynccontextmanager
@@ -26,3 +30,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Meeting Summarizer", lifespan=lifespan)
 app.include_router(health_router)
 app.include_router(meetings_router)
+
+# Mounted last so it never shadows the API routes above — StaticFiles only
+# handles a path once nothing more specific has already matched it.
+app.mount("/", StaticFiles(directory=_FRONTEND_DIR, html=True), name="frontend")
