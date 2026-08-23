@@ -13,6 +13,7 @@ from typing import Optional
 
 from groq import APIConnectionError, Groq, InternalServerError, RateLimitError
 
+from backend.app.utils.errors import clean_provider_message
 from backend.app.utils.retry import call_with_retry
 
 _MODEL = "openai/gpt-oss-120b"
@@ -113,11 +114,13 @@ def summarize(transcript: str, *, client: Optional[Groq] = None) -> dict:
     try:
         result = call_with_retry(_call, retry_on=_RETRYABLE)
     except _RETRYABLE as exc:
-        raise SummarizationError(f"Summarization service unavailable after retries: {exc}") from exc
+        raise SummarizationError(
+            f"Summarization service unavailable after retries: {clean_provider_message(exc)}"
+        ) from exc
     except json.JSONDecodeError as exc:
         raise SummarizationError(f"Model returned malformed JSON: {exc}") from exc
     except Exception as exc:
-        raise SummarizationError(f"Summarization failed: {exc}") from exc
+        raise SummarizationError(f"Summarization failed: {clean_provider_message(exc)}") from exc
 
     _validate_result(result)
     return result

@@ -47,9 +47,11 @@ backend/app/
 ├── core/
 │   ├── config.py         # env-driven settings, no python-dotenv
 │   └── logging.py
-├── schemas/                # request/response models (later phases)
+├── schemas/
+│   └── meeting.py         # API response shapes (Pydantic)
 └── utils/
-    └── retry.py           # retry helper for transient provider errors
+    ├── retry.py           # retry helper for transient provider errors
+    └── errors.py          # extracts a clean message from a provider exception
 frontend/                  # plain HTML/CSS/JS (later phase)
 tests/
 ```
@@ -108,6 +110,27 @@ distinctions that go wrong most often in meeting notes:
   invented date
 - the summary is a briefing for someone who missed the meeting, not a
   restatement of the transcript
+
+## Error handling & edge cases
+
+Every failure mode below was actually triggered and verified against the
+real Groq API while building the pipeline — not just asserted in a mocked
+test. Everything ends in a clean `FAILED` status with a readable
+`error_message`; nothing surfaces as a raw stack trace or hangs.
+
+| Case | Where it's caught | What happens |
+| --- | --- | --- |
+| Wrong file extension (e.g. `.exe`) | Upload, `storage_service.py` | `422` immediately, upload never written to disk |
+| Right extension, wrong content (e.g. a renamed text file) | Upload, byte-signature check | `422` — the first bytes don't match the format's real magic number |
+| Empty file (0 bytes) | Upload | `422` before any processing starts |
+| File over `MAX_UPLOAD_MB` | Upload, streamed size check | `422` — aborted mid-stream, partial file cleaned up, not just rejected after a full upload |
+| Valid header, corrupted/garbage payload (passes the upload check, isn't real audio) | ASR call | Groq's own `400` rejection is caught and surfaced verbatim, e.g. *"could not process file - is it a valid media file?"* — confirmed live with a hand-crafted WAV that has a valid `RIFF` header and garbage after it |
+| Silent or no-speech audio | After transcription, `processing_service.py` | Whisper doesn't return empty for silence — it hallucinates short boilerplate (confirmed live: 2 seconds of true digital silence came back as `" Thank you."`). A minimum-transcript-length check catches this before it reaches the summarizer, rather than producing a summary from a hallucinated sentence |
+| Network blip / rate limit / upstream 5xx from Groq | `utils/retry.py`, used by both ASR and LLM calls | Retried automatically (backoff, 3 attempts); only surfaces as `FAILED` if all retries are exhausted |
+| Malformed LLM JSON response | `summarization_service._validate_result` | Rejected and reported, even though `strict: true` on `gpt-oss-120b` should already guarantee valid shape — never trust an external system blindly |
+| Two identical files uploaded before either finishes processing | `find_completed_by_hash` only matches `COMPLETED` rows | Both process independently (a few duplicate provider calls); the dedupe only kicks in for *subsequent* uploads of the same file, once one has actually completed. A known, accepted trade-off — real locking would add complexity out of proportion to what this project needs |
+| `GROQ_API_KEY` missing | App startup | Logged as a warning immediately (`main.py`), instead of only failing silently on the first upload |
+| Unknown meeting id | `GET /api/v1/meetings/{id}` and `/status` | `404` with a message naming the id that wasn't found |
 
 ## Tests
 
