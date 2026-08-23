@@ -1,3 +1,4 @@
+from backend.app.database.connection import get_connection
 from backend.app.database.init_db import init_db
 from backend.app.database.meetings_repo import (
     create_meeting,
@@ -79,3 +80,78 @@ def test_find_completed_by_hash_only_matches_completed(tmp_path):
     match = find_completed_by_hash("duphash", db_path=db_path)
     assert match is not None
     assert match.id == meeting.id
+
+
+def test_save_summary_persists_title_and_open_questions(tmp_path):
+    db_path = _fresh_db(tmp_path)
+    meeting = create_meeting("call.mp3", "hash123", "audio/call.mp3", db_path=db_path)
+
+    save_summary(
+        meeting.id,
+        "Short summary",
+        ["Decision one"],
+        [{"task": "Follow up", "assignee": "Alex", "deadline": "Friday"}],
+        title="Weekly Sync",
+        open_questions=["Who owns the budget review?"],
+        db_path=db_path,
+    )
+
+    result = get_meeting(meeting.id, db_path=db_path)
+    assert result.title == "Weekly Sync"
+    assert result.open_questions == ["Who owns the budget review?"]
+
+
+def test_save_summary_defaults_title_and_open_questions_when_omitted(tmp_path):
+    db_path = _fresh_db(tmp_path)
+    meeting = create_meeting("call.mp3", "hash123", "audio/call.mp3", db_path=db_path)
+
+    save_summary(meeting.id, "Short summary", ["Decision one"], [], db_path=db_path)
+
+    result = get_meeting(meeting.id, db_path=db_path)
+    assert result.title is None
+    assert result.open_questions == []
+
+
+def test_init_db_migrates_columns_onto_existing_table_without_losing_data(tmp_path):
+    # Simulates a database created before title/open_questions existed —
+    # init_db must add the missing columns in place rather than requiring
+    # the database to be dropped and recreated.
+    db_path = tmp_path / "legacy.db"
+    conn = get_connection(db_path)
+    conn.executescript(
+        """
+        CREATE TABLE meetings (
+            id TEXT PRIMARY KEY,
+            filename TEXT NOT NULL,
+            file_hash TEXT NOT NULL,
+            audio_path TEXT NOT NULL,
+            status TEXT NOT NULL,
+            transcript TEXT,
+            summary TEXT,
+            key_decisions TEXT,
+            action_items TEXT,
+            error_message TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            processing_started_at TEXT,
+            processing_completed_at TEXT
+        );
+        """
+    )
+    conn.execute(
+        "INSERT INTO meetings (id, filename, file_hash, audio_path, status, created_at, updated_at) "
+        "VALUES ('legacy-id', 'old.mp3', 'oldhash', 'audio/old.mp3', 'COMPLETED', 't', 't')"
+    )
+    conn.commit()
+    conn.close()
+
+    init_db(db_path)
+
+    columns = {row["name"] for row in get_connection(db_path).execute("PRAGMA table_info(meetings)")}
+    assert "title" in columns
+    assert "open_questions" in columns
+
+    preserved = get_meeting("legacy-id", db_path=db_path)
+    assert preserved.filename == "old.mp3"
+    assert preserved.title is None
+    assert preserved.open_questions == []

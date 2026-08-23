@@ -61,6 +61,28 @@ def test_save_upload_accepts_valid_mp3(tmp_path, monkeypatch):
     assert Path(audio_path).read_bytes() == content
 
 
+def test_save_upload_accepts_valid_wav(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "AUDIO_DIR", tmp_path)
+    content = b"RIFF" + b"\x00" * 4 + b"WAVEfmt " + b"\x00" * 50
+
+    filename, file_hash, audio_path = save_upload(_upload("call.wav", content))
+
+    assert filename == "call.wav"
+    assert Path(audio_path).suffix == ".wav"
+    assert Path(audio_path).read_bytes() == content
+
+
+def test_save_upload_accepts_valid_m4a(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "AUDIO_DIR", tmp_path)
+    content = b"\x00\x00\x00\x18ftypM4A " + b"\x00" * 50
+
+    filename, file_hash, audio_path = save_upload(_upload("call.m4a", content))
+
+    assert filename == "call.m4a"
+    assert Path(audio_path).suffix == ".m4a"
+    assert Path(audio_path).read_bytes() == content
+
+
 def test_save_upload_dedupes_identical_content(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "AUDIO_DIR", tmp_path)
     content = b"RIFF" + b"\x00" * 50

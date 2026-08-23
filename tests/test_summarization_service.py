@@ -132,3 +132,11 @@ def test_summarize_raises_when_title_missing():
 
     with pytest.raises(SummarizationError, match="title"):
         summarize("transcript", client=client)
+
+
+def test_summarize_raises_when_open_questions_missing():
+    bad_json = VALID_JSON.replace(', "open_questions": []', "")
+    client = _client_with(lambda **kwargs: _response(bad_json))
+
+    with pytest.raises(SummarizationError, match="open_questions"):
+        summarize("transcript", client=client)
