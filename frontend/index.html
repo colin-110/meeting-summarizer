@@ -1,1 +1,67 @@
-<!-- Built in the frontend phase. Served by FastAPI's StaticFiles once the API exists. -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Meeting Summarizer</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Meeting Summarizer</h1>
+      <p class="subtitle">Upload a recording — get a transcript, a summary, the decisions that were made, and action items.</p>
+    </header>
+
+    <section id="upload-section">
+      <form id="upload-form">
+        <input type="file" id="audio-input" accept=".mp3,.wav,.m4a" required />
+        <button type="submit" id="upload-btn">Upload &amp; Summarize</button>
+      </form>
+      <p id="upload-error" class="error" hidden></p>
+    </section>
+
+    <section id="status-section" hidden>
+      <div class="status-row">
+        <span class="spinner"></span>
+        <span id="status-text">Queued…</span>
+      </div>
+    </section>
+
+    <section id="result-section" hidden>
+      <div class="result-header">
+        <h2 id="result-filename"></h2>
+        <span class="badge badge-completed">Completed</span>
+      </div>
+
+      <h3>Summary</h3>
+      <p id="result-summary"></p>
+
+      <h3>Key Decisions</h3>
+      <ul id="result-decisions"></ul>
+
+      <h3>Action Items</h3>
+      <ul id="result-actions" class="action-list"></ul>
+
+      <details class="transcript-details">
+        <summary>Transcript</summary>
+        <p id="result-transcript"></p>
+      </details>
+
+      <button id="new-upload-btn" type="button">Summarize another meeting</button>
+    </section>
+
+    <section id="error-section" hidden>
+      <p class="error" id="failure-message"></p>
+      <button id="retry-btn" type="button">Try again</button>
+    </section>
+
+    <section id="history-section">
+      <h3>Recent meetings</h3>
+      <ul id="history-list"></ul>
+    </section>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
