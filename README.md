@@ -203,11 +203,13 @@ app — nothing under `backend/` imports it) that measures transcription and
 summarization quality against a small hand-written golden set, instead of
 relying on eyeballing one recording:
 
-1. Three short meeting scripts with a *known* correct answer — the actual
+1. Four short meeting scripts with a *known* correct answer — the actual
    decisions, action items, and open questions are written down in advance
-   in `eval/cases.py`, including something in each script that's merely
-   *discussed*, to check the model doesn't invent a decision that was
-   never made.
+   in `eval/cases.py`. Each script includes something that's merely
+   *discussed*, not decided (checks the model doesn't invent a decision
+   that was never made), and one case (`incident_review`) specifically
+   tests that an owner/deadline is left `null` rather than guessed when
+   the transcript never states one.
 2. Each script is synthesized to real speech (Windows TTS) and run through
    the real ASR service — Word Error Rate is computed against the known
    script text.
@@ -218,14 +220,33 @@ relying on eyeballing one recording:
 python -m eval.run_accuracy_eval
 ```
 
-Latest run (3 cases):
+Two real things this eval surfaced and fixed, worth knowing about before
+reading the numbers:
+
+- **The first version overstated WER.** Scripts spelled times/numbers as
+  words ("nine thirty a.m.") while Whisper correctly transcribes what it
+  hears as digits ("9:30am") — a formatting mismatch in the *reference
+  text*, not a transcription error. Fixed by writing scripts the way
+  people actually write times/dates; average WER dropped from 3.2% to
+  ~1.8% purely from that correction, with no model change.
+- **`open_questions` under-captured deferred topics.** The field was
+  originally defined as "unresolved questions," but a meeting also defers
+  whole *topics* ("that's a bigger conversation for another day") without
+  phrasing them as a question — and the model, taking that definition
+  literally, sometimes dropped those entirely instead of filing them as
+  open questions. Broadened the schema description and prompt rule 7 to
+  explicitly cover deferred topics, not just literal questions.
+
+Latest results, averaged over 3 runs (temperature isn't 0, so a couple of
+individual runs are shown alongside the aggregate rather than picking the
+best one):
 
 | Metric | Result |
 | --- | --- |
-| Average WER | 3.2% |
-| Decision recall | 5/5, 0 false positives (nothing merely discussed was recorded as decided) |
-| Action item recall (task + assignee + deadline all correct) | 5/5 |
-| Open question recall | 4/4 |
+| Average WER | ~1.8% |
+| Decision recall | 18/18 across 3 runs, 0 false positives in any run |
+| Action item recall (task + assignee + deadline all correct, including correctly-null cases) | 21/21 across 3 runs |
+| Open question recall | 14/15 across 3 runs — the one miss was a full item dropped in a single run, not a phrasing mismatch; not fully deterministic at `temperature=0.2` |
 
 Full transcripts and raw model output for each case are written to
 `eval/results/<run-id>/report.md` (gitignored — regenerate by running the

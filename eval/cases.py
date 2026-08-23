@@ -17,7 +17,7 @@ CASES = [
     {
         "name": "sprint_planning",
         "script": (
-            "Alright, let's start sprint planning for next week. First, the "
+            "All right, let's start sprint planning for next week. First, the "
             "login bug. Priya said she'll pick that up and have a fix ready "
             "by Wednesday. Good. Next, we discussed whether to migrate the "
             "database to Postgres this sprint, but that's a bigger "
@@ -29,9 +29,8 @@ CASES = [
             "whether to hire a contractor for the mobile app, but no "
             "decision was made. We're still waiting on budget approval "
             "from finance before that can move forward. One more thing, "
-            "everyone agreed the daily standup time should move to nine "
-            "thirty a.m. starting Monday. That's it for today, thanks "
-            "everyone."
+            "everyone agreed the daily standup time should move to 9:30 AM "
+            "starting Monday. That's it for today, thanks everyone."
         ),
         "expected_decisions": [
             {"keywords": [["ci"]]},
@@ -59,8 +58,8 @@ CASES = [
             "quarter since attendance was low last year. Instead, the team "
             "decided to put that money into paid social ads. Jamie, you'll "
             "own the social ads campaign. Can you have a plan ready by the "
-            "fifteenth? Jamie said yes, she'll have the campaign plan by "
-            "the fifteenth. We also talked about redesigning the website, "
+            "15th? Jamie said yes, she'll have the campaign plan by "
+            "the 15th. We also talked about redesigning the website, "
             "but we couldn't agree on a budget for it, so that's still "
             "open. Someone needs to get a quote from the design agency "
             "before we can decide. Also, congratulations to the team, the "
@@ -111,6 +110,41 @@ CASES = [
         ],
         "expected_open_questions": [
             {"keywords": [["live chat"]]},
+        ],
+    },
+    {
+        # None of the first three cases ever left an owner or deadline
+        # unstated — every action item had both. That means they never
+        # actually tested SUMMARY_SCHEMA rule 3 (null, never guessed) in
+        # the one situation where a wrong answer is possible: forcing a
+        # guess. This case exists specifically to check that.
+        "name": "incident_review",
+        "script": (
+            "Quick incident review for yesterday's outage. Root cause was "
+            "the database connection pool running out during the traffic "
+            "spike. We decided to increase the connection pool size in "
+            "production. Also, we're going to add an alert for when the "
+            "pool goes above 80 percent, but nobody signed up for it yet, "
+            "so someone still needs to grab that. The runbook needs to be "
+            "updated with these steps too, but we didn't figure out who's "
+            "doing that today, we'll assign it at next week's sync. We "
+            "also talked about moving to a managed database service "
+            "instead, but that's a much bigger discussion for later, "
+            "we're not deciding on it now. Good work everyone on the fast "
+            "response yesterday."
+        ),
+        "expected_decisions": [
+            {"keywords": [["connection pool"], ["pool size"]]},
+        ],
+        "must_not_decide": [
+            {"keywords": [["managed database"]]},
+        ],
+        "expected_action_items": [
+            {"task_keywords": ["alert"], "assignee": None, "deadline_keywords": None},
+            {"task_keywords": ["runbook"], "assignee": None, "deadline_keywords": None},
+        ],
+        "expected_open_questions": [
+            {"keywords": [["managed database"]]},
         ],
     },
 ]

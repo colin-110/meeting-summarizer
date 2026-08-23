@@ -88,12 +88,21 @@ def score_decisions(expected: list[dict], must_not_decide: list[dict], actual: l
 
 
 def score_action_items(expected: list[dict], actual: list[dict]) -> dict:
+    """exp["assignee"] / exp["deadline_keywords"] of None means "this must
+    correctly come back null" — i.e. the model must not guess an owner or
+    deadline that was never stated (SUMMARY_SCHEMA rule 3)."""
     matched = 0
     for exp in expected:
         for item in actual:
             task_ok = _matches(item.get("task", ""), [exp["task_keywords"]])
-            assignee_ok = _norm(exp["assignee"]) in _norm(item.get("assignee") or "")
-            deadline_ok = _matches(item.get("deadline") or "", [[kw] for kw in exp["deadline_keywords"]])
+            if exp["assignee"] is None:
+                assignee_ok = item.get("assignee") is None
+            else:
+                assignee_ok = _norm(exp["assignee"]) in _norm(item.get("assignee") or "")
+            if exp["deadline_keywords"] is None:
+                deadline_ok = item.get("deadline") is None
+            else:
+                deadline_ok = _matches(item.get("deadline") or "", [[kw] for kw in exp["deadline_keywords"]])
             if task_ok and assignee_ok and deadline_ok:
                 matched += 1
                 break
