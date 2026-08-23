@@ -19,6 +19,9 @@ data/
 # Test artifacts
 .pytest_cache/
 
+# Eval run output (regenerable — see eval/run_accuracy_eval.py)
+eval/results/
+
 # Editors / OS
 .vscode/
 .idea/
