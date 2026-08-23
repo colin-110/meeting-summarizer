@@ -196,6 +196,41 @@ Two size guards worth knowing about:
   transcript before it reaches the LLM, so an abnormal input can't cause
   unbounded latency/cost; a real meeting transcript never gets close to it
 
+## Accuracy evaluation
+
+`eval/run_accuracy_eval.py` is a standalone script (not part of the shipped
+app — nothing under `backend/` imports it) that measures transcription and
+summarization quality against a small hand-written golden set, instead of
+relying on eyeballing one recording:
+
+1. Three short meeting scripts with a *known* correct answer — the actual
+   decisions, action items, and open questions are written down in advance
+   in `eval/cases.py`, including something in each script that's merely
+   *discussed*, to check the model doesn't invent a decision that was
+   never made.
+2. Each script is synthesized to real speech (Windows TTS) and run through
+   the real ASR service — Word Error Rate is computed against the known
+   script text.
+3. The real transcript is run through the real summarizer, and the result
+   is scored against the known decisions/action items/open questions.
+
+```bash
+python -m eval.run_accuracy_eval
+```
+
+Latest run (3 cases):
+
+| Metric | Result |
+| --- | --- |
+| Average WER | 3.2% |
+| Decision recall | 5/5, 0 false positives (nothing merely discussed was recorded as decided) |
+| Action item recall (task + assignee + deadline all correct) | 5/5 |
+| Open question recall | 4/4 |
+
+Full transcripts and raw model output for each case are written to
+`eval/results/<run-id>/report.md` (gitignored — regenerate by running the
+script; requires `GROQ_API_KEY` in `.env`, same as the app itself).
+
 ## Frontend
 
 Plain HTML/CSS/vanilla JS — no React, no build step, no `node_modules`.
