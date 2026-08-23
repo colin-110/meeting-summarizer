@@ -13,7 +13,7 @@ that were made, and a list of action items with owners and deadlines.
 - [x] Phase 4 — background processing
 - [x] Phase 5 — ASR integration (Groq Whisper)
 - [x] Phase 6 — LLM summarization (Groq gpt-oss-120b, strict JSON schema)
-- [ ] Phase 7 — result/status APIs
+- [x] Phase 7 — result/status APIs
 - [ ] Phase 8 — frontend
 - [ ] Phase 9 — file-hash dedupe
 - [ ] Phase 10 — validation, retries, error handling
@@ -76,6 +76,13 @@ Interactive API docs at <http://127.0.0.1:8000/docs>.
 | --- | --- | --- |
 | `GET` | `/health` | Liveness + a real SQLite round-trip |
 | `POST` | `/api/v1/meetings` | Upload audio (multipart, field `audio`) → `201` + `{id, status}` |
+| `GET` | `/api/v1/meetings` | List all meetings (id, filename, status, timestamps) |
+| `GET` | `/api/v1/meetings/{id}` | Full result — transcript, summary, key_decisions, action_items |
+| `GET` | `/api/v1/meetings/{id}/status` | Lightweight status poll — `{id, status, error_message}` |
+
+An unknown `{id}` returns `404` on both the detail and status routes. Poll
+`/status` while a meeting is `QUEUED`/`PROCESSING`; fetch `/{id}` once it's
+`COMPLETED` (or read `error_message` if it's `FAILED`).
 
 Accepted formats: `.mp3`, `.wav`, `.m4a` — checked by extension, declared
 content type, and a byte-signature sniff of the file itself, since the
