@@ -29,10 +29,13 @@
     </section>
 
     <section id="result-section" hidden>
+      <button id="new-upload-btn" type="button">Summarize another meeting</button>
+
       <div class="result-header">
-        <h2 id="result-filename"></h2>
+        <h2 id="result-title"></h2>
         <span class="badge badge-completed">Completed</span>
       </div>
+      <p class="result-filename" id="result-filename"></p>
 
       <h3>Summary</h3>
       <p id="result-summary"></p>
@@ -43,24 +46,30 @@
       <h3>Action Items</h3>
       <ul id="result-actions" class="action-list"></ul>
 
+      <h3>Open Questions</h3>
+      <ul id="result-open-questions"></ul>
+
       <details class="transcript-details">
         <summary>Transcript</summary>
         <p id="result-transcript"></p>
       </details>
-
-      <button id="new-upload-btn" type="button">Summarize another meeting</button>
     </section>
 
     <section id="error-section" hidden>
       <p class="error" id="failure-message"></p>
       <button id="retry-btn" type="button">Try again</button>
     </section>
-
-    <section id="history-section">
-      <h3>Recent meetings</h3>
-      <ul id="history-list"></ul>
-    </section>
   </div>
+
+  <button id="history-tab" type="button" aria-label="Recent meetings">Recent&nbsp;meetings</button>
+  <div id="history-overlay" hidden></div>
+  <aside id="history-panel" hidden>
+    <div class="history-panel-header">
+      <h3>Recent meetings</h3>
+      <button id="history-close-btn" type="button" aria-label="Close">&times;</button>
+    </div>
+    <ul id="history-list"></ul>
+  </aside>
 
   <script src="/app.js"></script>
 </body>

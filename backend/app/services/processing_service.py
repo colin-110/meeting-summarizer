@@ -49,13 +49,16 @@ def run(meeting_id: str) -> None:
 
         if reuse:
             summary, key_decisions, action_items = cached.summary, cached.key_decisions, cached.action_items
+            title, open_questions = cached.title, cached.open_questions
             log.info("reused cached result id=%s source=%s", meeting_id, cached.id)
         else:
             result = summarize(transcript)
             summary = result["summary"]
             key_decisions = result["key_decisions"]
             action_items = result["action_items"]
-        save_summary(meeting_id, summary, key_decisions, action_items)
+            title = result.get("title")
+            open_questions = result.get("open_questions", [])
+        save_summary(meeting_id, summary, key_decisions, action_items, title=title, open_questions=open_questions)
 
         update_status(meeting_id, MeetingStatus.COMPLETED)
         log.info("processing completed id=%s", meeting_id)

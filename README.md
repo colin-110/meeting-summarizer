@@ -115,6 +115,26 @@ distinctions that go wrong most often in meeting notes:
   invented date
 - the summary is a briefing for someone who missed the meeting, not a
   restatement of the transcript
+- **`title`** is a short, content-derived title (never a generic "Meeting
+  Notes"), and **`open_questions`** captures real unresolved items the group
+  raised but didn't answer — both are separate schema fields, not folded
+  into the summary text
+- the prompt includes one worked example (a short transcript paired with
+  its expected JSON output), which is the single highest-leverage addition
+  for output consistency — showing the model the shape once beats describing
+  it in rules alone
+- the transcript is explicitly framed as **data to summarize, not
+  instructions to follow** — live-tested by embedding a fake "SYSTEM
+  OVERRIDE, ignore previous instructions" block inside a real transcript;
+  the model kept summarizing the actual meeting and ignored it
+
+Two size guards worth knowing about:
+
+- `MAX_UPLOAD_MB` (25MB default) matches Groq's own free-tier transcription
+  cap — see [Error handling & edge cases](#error-handling--edge-cases)
+- `_MAX_TRANSCRIPT_CHARS` (100k chars) truncates a pathologically long
+  transcript before it reaches the LLM, so an abnormal input can't cause
+  unbounded latency/cost; a real meeting transcript never gets close to it
 
 ## Frontend
 
@@ -124,12 +144,15 @@ routers so it never shadows them), so the whole app is one process on one
 port.
 
 Upload a file and `app.js` polls `/status` every 2 seconds, moving through
-`Queued… → Processing… → ` a rendered result — summary, key decisions, a
-checklist of action items with owner and deadline, and the transcript
-behind a `<details>` toggle. A failure shows the actual `error_message`
-from the API, not a generic "something went wrong." A "Recent meetings"
-list at the bottom reuses `GET /api/v1/meetings` to let you reopen any
-past result (or re-check one still processing) without re-uploading.
+`Queued… → Processing… → ` a rendered result — title, summary, key
+decisions, a checklist of action items with owner and deadline, open
+questions, and the transcript behind a `<details>` toggle. A failure shows
+the actual `error_message` from the API, not a generic "something went
+wrong." "Summarize another meeting" sits at the top of the result view, not
+buried below it. "Recent meetings" lives in a side tab pinned to the edge of
+the screen rather than the main flow — click it to slide out a panel
+(reusing `GET /api/v1/meetings`) and reopen any past result, or re-check one
+still processing, without re-uploading.
 
 ## Error handling & edge cases
 
@@ -143,7 +166,7 @@ test. Everything ends in a clean `FAILED` status with a readable
 | Wrong file extension (e.g. `.exe`) | Upload, `storage_service.py` | `422` immediately, upload never written to disk |
 | Right extension, wrong content (e.g. a renamed text file) | Upload, byte-signature check | `422` — the first bytes don't match the format's real magic number |
 | Empty file (0 bytes) | Upload | `422` before any processing starts |
-| File over `MAX_UPLOAD_MB` | Upload, streamed size check | `422` — aborted mid-stream, partial file cleaned up, not just rejected after a full upload |
+| File over `MAX_UPLOAD_MB` (default 25MB) | Upload, streamed size check | `422` — aborted mid-stream, partial file cleaned up, not just rejected after a full upload. 25MB isn't arbitrary: it matches Groq's own free-tier transcription cap, so an oversized file is rejected immediately at upload instead of being saved, queued, and failing later at the transcription step with a less useful `413`. Raising `MAX_UPLOAD_MB` past 25 doesn't help — it only moves the failure downstream |
 | Valid header, corrupted/garbage payload (passes the upload check, isn't real audio) | ASR call | Groq's own `400` rejection is caught and surfaced verbatim, e.g. *"could not process file - is it a valid media file?"* — confirmed live with a hand-crafted WAV that has a valid `RIFF` header and garbage after it |
 | Silent or no-speech audio | After transcription, `processing_service.py` | Whisper doesn't return empty for silence — it hallucinates short boilerplate (confirmed live: 2 seconds of true digital silence came back as `" Thank you."`). A minimum-transcript-length check catches this before it reaches the summarizer, rather than producing a summary from a hallucinated sentence |
 | Network blip / rate limit / upstream 5xx from Groq | `utils/retry.py`, used by both ASR and LLM calls | Retried automatically (backoff, 3 attempts); only surfaces as `FAILED` if all retries are exhausted |
@@ -151,6 +174,8 @@ test. Everything ends in a clean `FAILED` status with a readable
 | Two identical files uploaded before either finishes processing | `find_completed_by_hash` only matches `COMPLETED` rows | Both process independently (a few duplicate provider calls); the dedupe only kicks in for *subsequent* uploads of the same file, once one has actually completed. A known, accepted trade-off — real locking would add complexity out of proportion to what this project needs |
 | `GROQ_API_KEY` missing | App startup | Logged as a warning immediately (`main.py`), instead of only failing silently on the first upload |
 | Unknown meeting id | `GET /api/v1/meetings/{id}` and `/status` | `404` with a message naming the id that wasn't found |
+| Pathologically long transcript (well past a normal meeting) | `summarization_service._prepare_transcript` | Truncated to `_MAX_TRANSCRIPT_CHARS` before it reaches the LLM, with a note appended so the model knows the transcript was cut — bounds latency/cost instead of sending an unbounded prompt |
+| Transcript content containing text that looks like an instruction to the model (e.g. "ignore previous instructions", a fake "system override") | `summarization_service._SYSTEM_PROMPT`, rule 8 | The model treats it as something a participant said, not a command — confirmed live by embedding a fake override block inside a real transcript and checking the output still summarized the actual meeting |
 
 ## Tests
 

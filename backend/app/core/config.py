@@ -28,7 +28,7 @@ _load_env_file(_ENV_FILE)
 HOST = os.environ.get("HOST", "127.0.0.1")
 PORT = int(os.environ.get("PORT", "8000"))
 DATA_DIR = Path(os.environ.get("DATA_DIR", "data")).resolve()
-MAX_UPLOAD_MB = int(os.environ.get("MAX_UPLOAD_MB", "50"))
+MAX_UPLOAD_MB = int(os.environ.get("MAX_UPLOAD_MB", "25"))
 
 DATABASE_PATH = DATA_DIR / "app.db"
 AUDIO_DIR = DATA_DIR / "audio"

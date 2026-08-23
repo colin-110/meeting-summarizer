@@ -27,9 +27,11 @@ def _row_to_meeting(row: sqlite3.Row) -> Meeting:
         audio_path=row["audio_path"],
         status=row["status"],
         transcript=row["transcript"],
+        title=row["title"],
         summary=row["summary"],
         key_decisions=json.loads(row["key_decisions"]) if row["key_decisions"] else [],
         action_items=json.loads(row["action_items"]) if row["action_items"] else [],
+        open_questions=json.loads(row["open_questions"]) if row["open_questions"] else [],
         error_message=row["error_message"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
@@ -135,6 +137,8 @@ def save_summary(
     summary: str,
     key_decisions: list,
     action_items: list,
+    title: Optional[str] = None,
+    open_questions: Optional[list] = None,
     db_path: Optional[Path] = None,
 ) -> None:
     conn = get_connection(db_path)
@@ -142,10 +146,18 @@ def save_summary(
         conn.execute(
             """
             UPDATE meetings
-            SET summary = ?, key_decisions = ?, action_items = ?, updated_at = ?
+            SET title = ?, summary = ?, key_decisions = ?, action_items = ?, open_questions = ?, updated_at = ?
             WHERE id = ?
             """,
-            (summary, json.dumps(key_decisions), json.dumps(action_items), _now(), meeting_id),
+            (
+                title,
+                summary,
+                json.dumps(key_decisions),
+                json.dumps(action_items),
+                json.dumps(open_questions or []),
+                _now(),
+                meeting_id,
+            ),
         )
         conn.commit()
     finally:

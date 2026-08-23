@@ -14,8 +14,27 @@ const errorSection = document.getElementById("error-section");
 const failureMessage = document.getElementById("failure-message");
 
 const historyList = document.getElementById("history-list");
+const historyTab = document.getElementById("history-tab");
+const historyPanel = document.getElementById("history-panel");
+const historyOverlay = document.getElementById("history-overlay");
+const historyCloseBtn = document.getElementById("history-close-btn");
 
 let pollTimer = null;
+
+function openHistory() {
+  historyPanel.hidden = false;
+  historyOverlay.hidden = false;
+  loadHistory();
+}
+
+function closeHistory() {
+  historyPanel.hidden = true;
+  historyOverlay.hidden = true;
+}
+
+historyTab.addEventListener("click", openHistory);
+historyCloseBtn.addEventListener("click", closeHistory);
+historyOverlay.addEventListener("click", closeHistory);
 
 function showOnly(section) {
   for (const s of [uploadSection, statusSection, resultSection, errorSection]) {
@@ -109,6 +128,7 @@ async function loadResult(meetingId) {
 }
 
 function renderResult(meeting) {
+  document.getElementById("result-title").textContent = meeting.title || meeting.filename;
   document.getElementById("result-filename").textContent = meeting.filename;
   document.getElementById("result-summary").textContent = meeting.summary || "—";
 
@@ -138,6 +158,18 @@ function renderResult(meeting) {
     actionsList.appendChild(li);
   }
 
+  const questionsList = document.getElementById("result-open-questions");
+  questionsList.innerHTML = "";
+  const openQuestions = meeting.open_questions || [];
+  if (openQuestions.length === 0) {
+    questionsList.innerHTML = '<li class="muted">No open questions recorded.</li>';
+  }
+  for (const question of openQuestions) {
+    const li = document.createElement("li");
+    li.textContent = question;
+    questionsList.appendChild(li);
+  }
+
   document.getElementById("result-transcript").textContent = meeting.transcript || "—";
 }
 
@@ -159,7 +191,7 @@ async function loadHistory() {
       const li = document.createElement("li");
       li.className = "history-item";
       li.innerHTML =
-        `<span>${escapeHtml(meeting.filename)}</span>` +
+        `<span>${escapeHtml(meeting.title || meeting.filename)}</span>` +
         `<span class="badge badge-${meeting.status.toLowerCase()}">${meeting.status}</span>`;
       li.addEventListener("click", () => openMeeting(meeting));
       historyList.appendChild(li);

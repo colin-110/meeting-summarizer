@@ -21,9 +21,11 @@ class Meeting:
     audio_path: str
     status: str
     transcript: Optional[str] = None
+    title: Optional[str] = None
     summary: Optional[str] = None
     key_decisions: list = field(default_factory=list)
     action_items: list = field(default_factory=list)
+    open_questions: list = field(default_factory=list)
     error_message: Optional[str] = None
     created_at: str = ""
     updated_at: str = ""
