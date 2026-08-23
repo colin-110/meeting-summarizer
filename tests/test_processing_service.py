@@ -21,7 +21,7 @@ def test_run_happy_path_marks_completed(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
     meeting = create_meeting("call.mp3", "hash1", "audio/call.mp3")
 
-    monkeypatch.setattr(processing_service, "transcribe", lambda path: "hello world")
+    monkeypatch.setattr(processing_service, "transcribe", lambda path: "hello world, this is the start of the meeting")
     monkeypatch.setattr(
         processing_service,
         "summarize",
@@ -32,7 +32,7 @@ def test_run_happy_path_marks_completed(tmp_path, monkeypatch):
 
     result = get_meeting(meeting.id)
     assert result.status == MeetingStatus.COMPLETED
-    assert result.transcript == "hello world"
+    assert result.transcript == "hello world, this is the start of the meeting"
     assert result.summary == "short summary"
     assert result.key_decisions == ["d1"]
 
@@ -60,6 +60,26 @@ def test_run_marks_failed_on_transcription_error(tmp_path, monkeypatch):
     assert summarize_called["value"] is False
 
 
+def test_run_marks_failed_on_too_short_transcript(tmp_path, monkeypatch):
+    # Whisper hallucinates short boilerplate for silence/no-speech audio
+    # instead of returning empty text — this must not reach the summarizer.
+    _setup_db(tmp_path, monkeypatch)
+    meeting = create_meeting("silence.wav", "hash1", "audio/silence.wav")
+
+    summarize_called = {"value": False}
+
+    monkeypatch.setattr(processing_service, "transcribe", lambda path: " Thank you.")
+    monkeypatch.setattr(processing_service, "summarize", lambda transcript: summarize_called.update(value=True))
+
+    processing_service.run(meeting.id)
+
+    result = get_meeting(meeting.id)
+    assert result.status == MeetingStatus.FAILED
+    assert "too short" in result.error_message
+    assert result.transcript == " Thank you."
+    assert summarize_called["value"] is False
+
+
 def test_run_marks_failed_on_summarization_error(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
     meeting = create_meeting("call.mp3", "hash1", "audio/call.mp3")
@@ -67,7 +87,7 @@ def test_run_marks_failed_on_summarization_error(tmp_path, monkeypatch):
     def _boom(transcript):
         raise processing_service.SummarizationError("malformed response")
 
-    monkeypatch.setattr(processing_service, "transcribe", lambda path: "hello world")
+    monkeypatch.setattr(processing_service, "transcribe", lambda path: "hello world, this is the start of the meeting")
     monkeypatch.setattr(processing_service, "summarize", _boom)
 
     processing_service.run(meeting.id)

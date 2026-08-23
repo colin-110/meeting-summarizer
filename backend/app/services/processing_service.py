@@ -19,6 +19,12 @@ from backend.app.services.transcription_service import TranscriptionError, trans
 
 log = get_logger(__name__)
 
+# Whisper doesn't return an empty string for silence/no-speech audio — it
+# hallucinates short boilerplate phrases instead (observed: " Thank you."
+# for two seconds of true digital silence). A length floor catches that
+# failure mode; a real meeting transcript is essentially never this short.
+_MIN_TRANSCRIPT_CHARS = 20
+
 
 def run(meeting_id: str) -> None:
     meeting = get_meeting(meeting_id)
@@ -35,6 +41,11 @@ def run(meeting_id: str) -> None:
 
         transcript = cached.transcript if reuse else transcribe(meeting.audio_path)
         save_transcript(meeting_id, transcript)
+
+        if not reuse and len(transcript.strip()) < _MIN_TRANSCRIPT_CHARS:
+            raise TranscriptionError(
+                "Transcript is too short to summarize — the audio may not contain any speech."
+            )
 
         if reuse:
             summary, key_decisions, action_items = cached.summary, cached.key_decisions, cached.action_items
