@@ -12,7 +12,7 @@ that were made, and a list of action items with owners and deadlines.
 - [x] Phase 3 — audio upload API + validation
 - [x] Phase 4 — background processing
 - [x] Phase 5 — ASR integration (Groq Whisper)
-- [ ] Phase 6 — LLM summarization
+- [x] Phase 6 — LLM summarization (Groq gpt-oss-120b, strict JSON schema)
 - [ ] Phase 7 — result/status APIs
 - [ ] Phase 8 — frontend
 - [ ] Phase 9 — file-hash dedupe
@@ -37,7 +37,7 @@ backend/app/
 │   ├── storage_service.py        # extension/signature/size checks, content-addressed storage
 │   ├── processing_service.py     # orchestrates one meeting: transcribe -> summarize -> persist
 │   ├── transcription_service.py  # Groq Whisper, isolated so the provider can change later
-│   └── summarization_service.py  # stub — real LLM summarization lands in its own phase
+│   └── summarization_service.py  # Groq gpt-oss-120b, strict JSON-schema output
 ├── database/
 │   ├── connection.py    # sqlite3 connection helper
 │   ├── init_db.py       # schema creation
@@ -83,6 +83,24 @@ brief specifically says not to trust the filename. Files are stored under
 their own sha256 hash rather than the client-supplied name, which also
 gives free dedupe: uploading identical content twice reuses the file on
 disk instead of writing it again.
+
+## Summarization
+
+The LLM step runs on Groq's `openai/gpt-oss-120b` with `response_format`
+set to a strict JSON schema — one of only two models on Groq where `strict:
+true` is actually enforced by constrained decoding rather than best-effort,
+so a malformed response isn't a failure mode to defend against so much as
+one to double-check (`_validate_result` still does, on principle).
+
+The system prompt (`summarization_service._SYSTEM_PROMPT`) encodes the
+distinctions that go wrong most often in meeting notes:
+
+- a **decision** is something the group actually settled on, not something
+  merely discussed or left open
+- a missing owner or deadline becomes `null`, never a guessed name or an
+  invented date
+- the summary is a briefing for someone who missed the meeting, not a
+  restatement of the transcript
 
 ## Tests
 
