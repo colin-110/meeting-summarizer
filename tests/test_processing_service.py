@@ -37,6 +37,31 @@ def test_run_happy_path_marks_completed(tmp_path, monkeypatch):
     assert result.key_decisions == ["d1"]
 
 
+def test_run_happy_path_persists_title_and_open_questions(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    meeting = create_meeting("call.mp3", "hash1", "audio/call.mp3")
+
+    monkeypatch.setattr(processing_service, "transcribe", lambda path: "hello world, this is the start of the meeting")
+    monkeypatch.setattr(
+        processing_service,
+        "summarize",
+        lambda transcript: {
+            "title": "Weekly Sync",
+            "summary": "short summary",
+            "key_decisions": ["d1"],
+            "action_items": [],
+            "open_questions": ["What's the budget?"],
+        },
+    )
+
+    processing_service.run(meeting.id)
+
+    result = get_meeting(meeting.id)
+    assert result.status == MeetingStatus.COMPLETED
+    assert result.title == "Weekly Sync"
+    assert result.open_questions == ["What's the budget?"]
+
+
 def test_run_marks_failed_on_transcription_error(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
     meeting = create_meeting("call.mp3", "hash1", "audio/call.mp3")

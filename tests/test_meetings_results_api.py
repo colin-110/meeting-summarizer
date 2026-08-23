@@ -60,6 +60,39 @@ def test_get_meeting_detail_returns_full_result(tmp_path, monkeypatch):
     assert body["key_decisions"] == ["Ship Friday"]
     assert body["action_items"][0]["task"] == "Write notes"
     assert body["action_items"][0]["deadline"] is None
+    assert body["title"] is None
+    assert body["open_questions"] == []
+
+
+def test_get_meeting_detail_includes_title_and_open_questions(tmp_path, monkeypatch):
+    db_path = tmp_path / "test.db"
+    init_db(db_path)
+    monkeypatch.setattr(config, "DATABASE_PATH", db_path)
+
+    meeting = create_meeting("standup.mp3", "hash2", "audio/standup.mp3")
+    save_transcript(meeting.id, "hello team")
+    save_summary(
+        meeting.id,
+        "Quick sync.",
+        ["Ship Friday"],
+        [],
+        title="Weekly Standup",
+        open_questions=["Who owns the budget?"],
+    )
+    update_status(meeting.id, MeetingStatus.COMPLETED)
+
+    app = _app(tmp_path, monkeypatch)
+    with TestClient(app) as client:
+        response = client.get(f"/api/v1/meetings/{meeting.id}")
+        list_response = client.get("/api/v1/meetings")
+
+    body = response.json()
+    assert body["title"] == "Weekly Standup"
+    assert body["open_questions"] == ["Who owns the budget?"]
+
+    list_body = list_response.json()
+    match = next(m for m in list_body if m["id"] == meeting.id)
+    assert match["title"] == "Weekly Standup"
 
 
 def test_get_meeting_status_returns_lightweight_result(tmp_path, monkeypatch):
