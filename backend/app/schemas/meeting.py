@@ -19,6 +19,7 @@ class MeetingSummaryOut(BaseModel):
 
     id: str
     filename: str
+    title: Optional[str] = None
     status: str
     created_at: str
     updated_at: str
@@ -29,6 +30,7 @@ class MeetingDetailOut(MeetingSummaryOut):
     summary: Optional[str] = None
     key_decisions: list[str] = []
     action_items: list[ActionItem] = []
+    open_questions: list[str] = []
     error_message: Optional[str] = None
     processing_started_at: Optional[str] = None
     processing_completed_at: Optional[str] = None

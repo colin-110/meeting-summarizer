@@ -2,12 +2,15 @@ import groq
 import httpx
 import pytest
 
+from backend.app.services import summarization_service
 from backend.app.services.summarization_service import SummarizationError, summarize
 
 VALID_JSON = (
-    '{"summary": "The team agreed to ship on Friday.", '
+    '{"title": "Friday Release Planning", '
+    '"summary": "The team agreed to ship on Friday.", '
     '"key_decisions": ["Ship the release on Friday"], '
-    '"action_items": [{"task": "Prepare release notes", "assignee": "Alex", "deadline": "Friday"}]}'
+    '"action_items": [{"task": "Prepare release notes", "assignee": "Alex", "deadline": "Friday"}], '
+    '"open_questions": []}'
 )
 
 
@@ -43,9 +46,11 @@ def test_summarize_returns_parsed_result():
 
     result = summarize("some transcript text", client=client)
 
+    assert result["title"] == "Friday Release Planning"
     assert result["summary"] == "The team agreed to ship on Friday."
     assert result["key_decisions"] == ["Ship the release on Friday"]
     assert result["action_items"][0]["task"] == "Prepare release notes"
+    assert result["open_questions"] == []
 
 
 def test_summarize_rejects_empty_transcript():
@@ -104,3 +109,26 @@ def test_summarize_raises_after_exhausting_retries(monkeypatch):
 
     with pytest.raises(SummarizationError):
         summarize("transcript", client=_client_with(create))
+
+
+def test_summarize_truncates_overlong_transcript(monkeypatch):
+    monkeypatch.setattr(summarization_service, "_MAX_TRANSCRIPT_CHARS", 50)
+    captured = {}
+
+    def create(**kwargs):
+        captured.update(kwargs)
+        return _response(VALID_JSON)
+
+    summarize("x" * 500, client=_client_with(create))
+
+    sent_content = captured["messages"][1]["content"]
+    assert "x" * 500 not in sent_content
+    assert "truncated" in sent_content
+
+
+def test_summarize_raises_when_title_missing():
+    bad_json = VALID_JSON.replace('"title": "Friday Release Planning", ', "")
+    client = _client_with(lambda **kwargs: _response(bad_json))
+
+    with pytest.raises(SummarizationError, match="title"):
+        summarize("transcript", client=client)

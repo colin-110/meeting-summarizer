@@ -218,10 +218,17 @@ ul {
 
 #new-upload-btn,
 #retry-btn {
-  margin-top: 1.25rem;
   background: transparent;
   color: var(--accent);
   border: 1px solid var(--accent);
+}
+
+#new-upload-btn {
+  margin-bottom: 1.25rem;
+}
+
+#retry-btn {
+  margin-top: 1.25rem;
 }
 
 #new-upload-btn:hover,
@@ -229,8 +236,70 @@ ul {
   background: #eff6ff;
 }
 
-#history-section h3 {
-  margin-top: 0;
+.result-filename {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin: 0 0 0.5rem;
+  word-break: break-word;
+}
+
+/* Recent meetings: a side tab pinned to the viewport edge, opening a
+   slide-in panel — kept out of the main flow so it reads as a lookup
+   tool, not part of the primary upload -> result path. */
+#history-tab {
+  position: fixed;
+  top: 50%;
+  right: 0;
+  transform: translateY(-50%) rotate(180deg);
+  writing-mode: vertical-rl;
+  border-radius: 8px 0 0 8px;
+  padding: 1rem 0.5rem;
+  z-index: 20;
+}
+
+#history-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  z-index: 29;
+}
+
+#history-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  height: 100vh;
+  width: min(320px, 85vw);
+  background: var(--card);
+  border-left: 1px solid var(--line);
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.12);
+  padding: 1.5rem;
+  overflow-y: auto;
+  z-index: 30;
+}
+
+.history-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.history-panel-header h3 {
+  margin: 0;
+}
+
+#history-close-btn {
+  background: transparent;
+  color: var(--muted);
+  border: none;
+  font-size: 1.4rem;
+  line-height: 1;
+  padding: 0 0.25rem;
+}
+
+#history-close-btn:hover {
+  color: var(--ink);
 }
 
 #history-list {
