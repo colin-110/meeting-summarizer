@@ -3,6 +3,10 @@
 Upload a meeting recording, get back a transcript, a summary, the decisions
 that were made, and a list of action items with owners and deadlines.
 
+See [DECISIONS.md](DECISIONS.md) for the engineering log — the problems hit,
+why each architectural and provider choice was made, and the trade-offs
+accepted along the way.
+
 ## Status
 
 🚧 In progress.
@@ -24,6 +28,50 @@ that were made, and a list of action items with owners and deadlines.
 FastAPI, SQLite (stdlib `sqlite3`, no ORM), FastAPI `BackgroundTasks` for
 async processing, a plain HTML/CSS/JS frontend. No Docker, Redis, Celery, or
 frontend build step — see [Why no queue or cache](#why-no-queue-or-cache).
+
+## How a request flows
+
+```mermaid
+sequenceDiagram
+    participant Browser
+    participant API as api/meetings.py
+    participant Storage as storage_service
+    participant DB as SQLite
+    participant BG as BackgroundTasks
+    participant Proc as processing_service
+    participant Groq
+
+    Browser->>API: POST /api/v1/meetings (audio file)
+    API->>Storage: validate + save (extension, signature, size)
+    Storage-->>API: file_hash, audio_path
+    API->>DB: create_meeting (status=QUEUED)
+    API->>BG: queue run(meeting_id)
+    API-->>Browser: 201 {id, status: QUEUED}
+
+    BG->>Proc: run(meeting_id)
+    Proc->>DB: find_completed_by_hash(file_hash)
+    alt duplicate content already completed
+        Proc->>DB: reuse cached transcript/summary
+    else new content
+        Proc->>Groq: transcribe (Whisper)
+        Groq-->>Proc: transcript
+        Proc->>Groq: summarize (gpt-oss-120b, strict schema)
+        Groq-->>Proc: title, summary, decisions, action items, open questions
+    end
+    Proc->>DB: save + status=COMPLETED (or FAILED + error_message)
+
+    loop every 2s
+        Browser->>API: GET /api/v1/meetings/{id}/status
+        API-->>Browser: {status}
+    end
+    Browser->>API: GET /api/v1/meetings/{id}
+    API-->>Browser: full result
+```
+
+The upload request returns immediately after queuing — transcription and
+summarization happen in `BackgroundTasks`, after the response is already
+sent, so the browser polls `/status` rather than blocking on one long
+request.
 
 ## Project structure
 
@@ -97,6 +145,18 @@ brief specifically says not to trust the filename. Files are stored under
 their own sha256 hash rather than the client-supplied name, which also
 gives free dedupe: uploading identical content twice reuses the file on
 disk instead of writing it again.
+
+## Transcription
+
+ASR runs on Groq's `whisper-large-v3-turbo`, not plain `whisper-large-v3` —
+a deliberate accuracy/speed trade-off, not an oversight. Turbo is a
+distilled model (809M parameters vs. 1.55B, 4 decoder layers vs. 32) that
+runs meaningfully faster and cheaper at a measured cost of about 2 points
+of word error rate (~12% vs. ~10%). For meeting audio — generally clear,
+single/few-speaker, English — that gap is not the bottleneck on summary
+quality; if this were handling noisy multilingual audio where every word
+error compounds, `whisper-large-v3` would be the better default. Swapping
+is a one-line change (`transcription_service._MODEL`).
 
 ## Summarization
 
