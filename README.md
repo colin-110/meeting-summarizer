@@ -9,6 +9,8 @@ accepted along the way.
 
 ## Demo
 
+**Live app:** <http://18.234.90.43:8000> *(demo instance — plain HTTP, may be taken down after review)*
+
 https://github.com/user-attachments/assets/93130e4a-8071-453c-be8a-086fe1c8285c
 
 ## Features
