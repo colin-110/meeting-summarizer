@@ -114,23 +114,50 @@ requirements.txt            # runtime deps only, hand-curated (not a raw `pip fr
 requirements-dev.txt        # + pytest, for local development and CI
 ```
 
-## Setup
+## Running the project
+
+Requires Python 3.11+ (the code uses `StrEnum`) and a free Groq API key
+(<https://console.groq.com>, no credit card).
 
 ```bash
+# 1. Set up the environment
 python -m venv .venv
 .venv\Scripts\Activate.ps1        # Windows PowerShell
 pip install -r requirements-dev.txt
 
+# 2. Configure
 cp .env.example .env
-# then add GROQ_API_KEY=gsk_... to .env — free tier at https://console.groq.com
+# then open .env and set GROQ_API_KEY=gsk_...
 
+# 3. Run — this one command serves both the API and the frontend
 uvicorn backend.app.main:app --reload
 ```
+
+That's the whole project: `main.py` serves the frontend as static files
+*and* the API from the same process on the same port, so there's no
+separate frontend server or build step to run.
 
 Open <http://127.0.0.1:8000> for the app itself, or
 <http://127.0.0.1:8000/health> for a liveness check
 (`{"status": "ok", "database": "ok"}`). Interactive API docs at
 <http://127.0.0.1:8000/docs>.
+
+One gotcha worth knowing: `.env` is only read once, when the process
+starts. If you change it while the server is running, `--reload` will not
+pick it up — stop the process (Ctrl+C) and start it again.
+
+**Running the tests:**
+
+```bash
+pytest -v
+```
+
+**Running the accuracy eval** (separate from the app itself — see
+[Accuracy evaluation](#accuracy-evaluation)):
+
+```bash
+python -m eval.run_accuracy_eval
+```
 
 ## API
 
@@ -302,11 +329,8 @@ test. Everything ends in a clean `FAILED` status with a readable
 
 ## Tests
 
-```bash
-pytest -v
-```
-
-Runs automatically on every push via GitHub Actions
+`pytest -v` (see [Running the project](#running-the-project)) runs
+automatically on every push via GitHub Actions
 (`.github/workflows/tests.yml`).
 
 ## Why no queue or cache
