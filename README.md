@@ -7,9 +7,13 @@ See [DECISIONS.md](DECISIONS.md) for the engineering log — the problems hit,
 why each architectural and provider choice was made, and the trade-offs
 accepted along the way.
 
+## Demo
+
+https://github.com/user-attachments/assets/93130e4a-8071-453c-be8a-086fe1c8285c
+
 ## Status
 
-🚧 In progress.
+✅ Complete.
 
 - [x] Phase 1 — repository skeleton, dependencies, CI
 - [x] Phase 2 — FastAPI app + SQLite persistence
@@ -21,7 +25,7 @@ accepted along the way.
 - [x] Phase 8 — frontend
 - [x] Phase 9 — file-hash dedupe *(landed inside Phases 2 &amp; 4, not a separate step)*
 - [x] Phase 10 — validation, retries, error handling *(built incrementally alongside Phases 3, 5, 6 rather than as one pass — see [Error handling & edge cases](#error-handling--edge-cases))*
-- [ ] Phase 11+ — docs, demo video, cleanup
+- [x] Phase 11 — docs, demo video, accuracy eval, cleanup
 
 ## Stack
 
