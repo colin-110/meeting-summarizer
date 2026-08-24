@@ -11,21 +11,21 @@ accepted along the way.
 
 https://github.com/user-attachments/assets/93130e4a-8071-453c-be8a-086fe1c8285c
 
-## Status
+## Features
 
-✅ Complete.
-
-- [x] Phase 1 — repository skeleton, dependencies, CI
-- [x] Phase 2 — FastAPI app + SQLite persistence
-- [x] Phase 3 — audio upload API + validation
-- [x] Phase 4 — background processing
-- [x] Phase 5 — ASR integration (Groq Whisper)
-- [x] Phase 6 — LLM summarization (Groq gpt-oss-120b, strict JSON schema)
-- [x] Phase 7 — result/status APIs
-- [x] Phase 8 — frontend
-- [x] Phase 9 — file-hash dedupe *(landed inside Phases 2 &amp; 4, not a separate step)*
-- [x] Phase 10 — validation, retries, error handling *(built incrementally alongside Phases 3, 5, 6 rather than as one pass — see [Error handling & edge cases](#error-handling--edge-cases))*
-- [x] Phase 11 — docs, demo video, accuracy eval, cleanup
+- Upload a `.mp3`, `.wav`, or `.m4a` recording and get back a transcript,
+  a summary, key decisions, action items (with owner and deadline), and
+  open questions
+- Processing runs asynchronously — the upload returns immediately and the
+  frontend polls for status, so a long recording never blocks the request
+- Identical audio is automatically deduplicated by content hash and never
+  reprocessed
+- Every provider failure mode (rate limits, corrupted files, silent audio,
+  malformed responses) is handled explicitly and verified live, not just
+  assumed — see [Error handling & edge cases](#error-handling--edge-cases)
+- Measured, not assumed, accuracy: ~1.8% average transcription WER and
+  near-perfect summarization recall on a golden test set — see
+  [Accuracy evaluation](#accuracy-evaluation)
 
 ## Stack
 
