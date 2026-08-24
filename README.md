@@ -6,7 +6,7 @@ action items with owners and deadlines — built on FastAPI, SQLite, and
 Groq (Whisper for transcription, `gpt-oss-120b` for summarization), with
 no Docker, Redis, Celery, or frontend framework.
 
-**Live app:** <http://18.234.90.43:8000> *(demo instance — plain HTTP, may be taken down after review)*
+**Live app:** <http://18.234.90.43:8000> 
 
 See [DECISIONS.md](DECISIONS.md) for the engineering log — the problems hit,
 why each architectural and provider choice was made, and the trade-offs
