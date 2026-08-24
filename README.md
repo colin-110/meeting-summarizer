@@ -1,15 +1,18 @@
 # Meeting Summarizer
 
-Upload a meeting recording, get back a transcript, a summary, the decisions
-that were made, and a list of action items with owners and deadlines.
+An AI meeting summarizer: upload a recording and get back a transcript, a
+concise summary, the decisions that were actually made, and a list of
+action items with owners and deadlines — built on FastAPI, SQLite, and
+Groq (Whisper for transcription, `gpt-oss-120b` for summarization), with
+no Docker, Redis, Celery, or frontend framework.
+
+**Live app:** <http://18.234.90.43:8000> *(demo instance — plain HTTP, may be taken down after review)*
 
 See [DECISIONS.md](DECISIONS.md) for the engineering log — the problems hit,
 why each architectural and provider choice was made, and the trade-offs
 accepted along the way.
 
 ## Demo
-
-**Live app:** <http://18.234.90.43:8000> *(demo instance — plain HTTP, may be taken down after review)*
 
 https://github.com/user-attachments/assets/93130e4a-8071-453c-be8a-086fe1c8285c
 
