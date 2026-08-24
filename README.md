@@ -104,7 +104,14 @@ frontend/
 ├── index.html            # upload form + status/result/error views
 ├── style.css
 └── app.js                # upload -> poll status -> render result, plus history
-tests/
+tests/                    # mirrors backend/app/ — one test file per module
+eval/                     # standalone accuracy eval, not part of the shipped app
+├── cases.py               # golden-set meetings with known-correct answers
+├── wer.py                 # word error rate (hand-implemented, no extra dependency)
+└── run_accuracy_eval.py   # synthesizes audio, runs the real pipeline, scores it
+.github/workflows/tests.yml # pytest on every push
+requirements.txt            # runtime deps only, hand-curated (not a raw `pip freeze`)
+requirements-dev.txt        # + pytest, for local development and CI
 ```
 
 ## Setup

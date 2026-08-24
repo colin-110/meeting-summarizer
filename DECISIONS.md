@@ -181,6 +181,18 @@ than permanently occupying page space.
 
 ## Process discipline
 
+- **`requirements.txt` had to be hand-curated, not generated.** Running
+  `pip freeze` after installing `requirements-dev.txt` into the same venv
+  pulled `pytest`, `iniconfig`, `pluggy`, and `Pygments` into what was
+  supposed to be the runtime-only `requirements.txt` — a test dependency
+  quietly becoming a production one. Fixed by hand-listing only the
+  packages the app actually imports at runtime, with `requirements-dev.txt`
+  layered on top (`-r requirements.txt` + `pytest`) rather than the two
+  files drifting out of sync with each other.
+- **CI runs the same test suite on every push**
+  (`.github/workflows/tests.yml` — Python 3.12, `pytest -v`), not just
+  locally. A test suite that only the author remembers to run isn't much
+  of a guarantee to anyone reviewing the repo.
 - **Caught a misleading commit message before pushing.** An early Phase 8
   commit was titled "feat: add React frontend" — a leftover echo of an
   earlier planning document's phase list, with a parenthetical clarifying
