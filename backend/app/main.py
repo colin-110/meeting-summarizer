@@ -9,6 +9,7 @@ from backend.app.api.health import router as health_router
 from backend.app.api.meetings import router as meetings_router
 from backend.app.core.logging import configure_logging, get_logger
 from backend.app.database.init_db import init_db
+from backend.app.database.meetings_repo import fail_stuck_processing
 
 configure_logging()
 log = get_logger(__name__)
@@ -19,6 +20,9 @@ _FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    recovered = fail_stuck_processing()
+    if recovered:
+        log.warning("marked %d meeting(s) stuck in PROCESSING as FAILED after restart", recovered)
     if not os.environ.get("GROQ_API_KEY"):
         log.warning(
             "GROQ_API_KEY is not set — uploads will be accepted but every "

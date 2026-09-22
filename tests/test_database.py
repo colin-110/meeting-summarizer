@@ -2,6 +2,7 @@ from backend.app.database.connection import get_connection
 from backend.app.database.init_db import init_db
 from backend.app.database.meetings_repo import (
     create_meeting,
+    fail_stuck_processing,
     find_completed_by_hash,
     get_meeting,
     save_summary,
@@ -110,6 +111,31 @@ def test_save_summary_defaults_title_and_open_questions_when_omitted(tmp_path):
     result = get_meeting(meeting.id, db_path=db_path)
     assert result.title is None
     assert result.open_questions == []
+
+
+def test_fail_stuck_processing_only_touches_processing_rows(tmp_path):
+    db_path = _fresh_db(tmp_path)
+    stuck = create_meeting("call.mp3", "hash1", "audio/call.mp3", db_path=db_path)
+    update_status(stuck.id, MeetingStatus.PROCESSING, db_path=db_path)
+    done = create_meeting("other.mp3", "hash2", "audio/other.mp3", db_path=db_path)
+    update_status(done.id, MeetingStatus.COMPLETED, db_path=db_path)
+    queued = create_meeting("third.mp3", "hash3", "audio/third.mp3", db_path=db_path)
+    update_status(queued.id, MeetingStatus.QUEUED, db_path=db_path)
+
+    affected = fail_stuck_processing(db_path=db_path)
+
+    assert affected == 1
+    recovered = get_meeting(stuck.id, db_path=db_path)
+    assert recovered.status == MeetingStatus.FAILED
+    assert "restart" in recovered.error_message
+    assert get_meeting(done.id, db_path=db_path).status == MeetingStatus.COMPLETED
+    assert get_meeting(queued.id, db_path=db_path).status == MeetingStatus.QUEUED
+
+
+def test_fail_stuck_processing_returns_zero_when_nothing_stuck(tmp_path):
+    db_path = _fresh_db(tmp_path)
+
+    assert fail_stuck_processing(db_path=db_path) == 0
 
 
 def test_init_db_migrates_columns_onto_existing_table_without_losing_data(tmp_path):

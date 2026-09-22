@@ -120,6 +120,31 @@ def update_status(
         conn.close()
 
 
+def fail_stuck_processing(
+    message: str = "Interrupted by a server restart before processing finished.",
+    db_path: Optional[Path] = None,
+) -> int:
+    """Mark any meeting left in PROCESSING as FAILED. Returns the count affected.
+
+    BackgroundTasks run in-process with no broker or resumption mechanism —
+    if the process restarts while one is running, that row would otherwise
+    stay PROCESSING forever with nothing to ever move it forward. Called
+    once at startup so a crash doesn't leave a meeting silently stuck.
+    """
+    conn = get_connection(db_path)
+    try:
+        now = _now()
+        cursor = conn.execute(
+            "UPDATE meetings SET status = ?, error_message = ?, updated_at = ?, processing_completed_at = ? "
+            "WHERE status = ?",
+            (MeetingStatus.FAILED, message, now, now, MeetingStatus.PROCESSING),
+        )
+        conn.commit()
+        return cursor.rowcount
+    finally:
+        conn.close()
+
+
 def save_transcript(meeting_id: str, transcript: str, db_path: Optional[Path] = None) -> None:
     conn = get_connection(db_path)
     try:

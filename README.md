@@ -6,8 +6,6 @@ action items with owners and deadlines — built on FastAPI, SQLite, and
 Groq (Whisper for transcription, `gpt-oss-120b` for summarization), with
 no Docker, Redis, Celery, or frontend framework.
 
-**Live app:** <http://18.234.90.43:8000> 
-
 See [DECISIONS.md](DECISIONS.md) for the engineering log — the problems hit,
 why each architectural and provider choice was made, and the trade-offs
 accepted along the way.
@@ -31,6 +29,9 @@ https://github.com/user-attachments/assets/93130e4a-8071-453c-be8a-086fe1c8285c
 - Measured, not assumed, accuracy: ~1.8% average transcription WER and
   near-perfect summarization recall on a golden test set — see
   [Accuracy evaluation](#accuracy-evaluation)
+- A crashed or restarted server can't leave a meeting silently stuck —
+  and a public upload endpoint can't be used to quietly exhaust the
+  shared Groq quota — see [Error handling & edge cases](#error-handling--edge-cases)
 
 ## Stack
 
@@ -335,6 +336,8 @@ test. Everything ends in a clean `FAILED` status with a readable
 | Unknown meeting id | `GET /api/v1/meetings/{id}` and `/status` | `404` with a message naming the id that wasn't found |
 | Pathologically long transcript (well past a normal meeting) | `summarization_service._prepare_transcript` | Truncated to `_MAX_TRANSCRIPT_CHARS` before it reaches the LLM, with a note appended so the model knows the transcript was cut — bounds latency/cost instead of sending an unbounded prompt |
 | Transcript content containing text that looks like an instruction to the model (e.g. "ignore previous instructions", a fake "system override") | `summarization_service._SYSTEM_PROMPT`, rule 8 | The model treats it as something a participant said, not a command — confirmed live by embedding a fake override block inside a real transcript and checking the output still summarized the actual meeting |
+| Server crashes or restarts mid-processing | App startup, `fail_stuck_processing` | `BackgroundTasks` run in-process with no broker to resume them — on the next startup, any meeting still `PROCESSING` is swept to `FAILED` with an explicit "interrupted by a restart" message instead of staying stuck forever. Confirmed live: killed the server mid-`PROCESSING`, restarted it, and the meeting came back `FAILED` with that message |
+| One client sending many uploads quickly | Upload, `utils/rate_limit.py` | `429` after 10 uploads from the same client within 10 minutes — an in-memory per-IP sliding window, no Redis. Protects the shared Groq free-tier quota on a public demo link from being exhausted by one client. Confirmed live: the 11th rapid upload from the same address returned `429` while the first 10 reached normal validation |
 
 ## Tests
 
@@ -344,8 +347,8 @@ automatically on every push via GitHub Actions
 
 ## Why no queue or cache
 
-The assignment's own submission guidelines ask for minimal, native
-dependencies — "no extra modules," "use only what is strictly required."
+This project deliberately keeps dependencies minimal and native wherever
+possible — no extra modules, only what's actually needed at this scale.
 FastAPI's built-in `BackgroundTasks` covers "process audio without making
 the user wait" without a Celery/Redis broker, and a `file_hash` column on
 the `meetings` table covers dedupe without a separate cache layer. Both are

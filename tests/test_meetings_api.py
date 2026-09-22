@@ -2,6 +2,7 @@ import io
 
 from fastapi.testclient import TestClient
 
+from backend.app.api import meetings as meetings_api
 from backend.app.core import config
 from backend.app.models.meeting import MeetingStatus
 
@@ -50,3 +51,30 @@ def test_upload_rejects_missing_file(tmp_path, monkeypatch):
         response = client.post("/api/v1/meetings")
 
     assert response.status_code == 422
+
+
+def test_upload_is_rate_limited_per_client(tmp_path, monkeypatch):
+    # Small, isolated limit so the test is fast and doesn't depend on the
+    # real production threshold; a unique X-Forwarded-For value keeps this
+    # test's counter separate from every other test hitting this endpoint.
+    monkeypatch.setattr(meetings_api, "_UPLOAD_RATE_LIMIT", 2)
+    monkeypatch.setattr(meetings_api, "_UPLOAD_RATE_WINDOW_SECONDS", 60)
+    headers = {"x-forwarded-for": "203.0.113.5"}
+
+    with TestClient(_app(tmp_path, monkeypatch)) as client:
+        for _ in range(2):
+            response = client.post(
+                "/api/v1/meetings",
+                files={"audio": ("notes.exe", io.BytesIO(b"whatever"), "application/octet-stream")},
+                headers=headers,
+            )
+            assert response.status_code == 422  # under the limit, reaches normal validation
+
+        blocked = client.post(
+            "/api/v1/meetings",
+            files={"audio": ("notes.exe", io.BytesIO(b"whatever"), "application/octet-stream")},
+            headers=headers,
+        )
+
+    assert blocked.status_code == 429
+    assert "Too many uploads" in blocked.json()["detail"]
