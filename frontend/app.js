@@ -83,6 +83,16 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
+function timeAgo(isoString) {
+  const diffMinutes = Math.round((Date.now() - new Date(isoString).getTime()) / 60000);
+  if (diffMinutes < 1) return "just now";
+  if (diffMinutes < 60) return `${diffMinutes}m ago`;
+  const diffHours = Math.round(diffMinutes / 60);
+  if (diffHours < 24) return `${diffHours}h ago`;
+  const diffDays = Math.round(diffHours / 24);
+  return `${diffDays}d ago`;
+}
+
 function showSelectedFile(file) {
   dropzoneText.innerHTML = file ? escapeHtml(file.name) : DEFAULT_DROPZONE_HTML;
 }
@@ -194,10 +204,28 @@ async function loadResult(meetingId) {
   loadHistory();
 }
 
+const ICON_PERSON =
+  '<svg class="meta-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="3.5" /><path d="M5 20c0-3.5 3-6 7-6s7 2.5 7 6" /></svg>';
+const ICON_CALENDAR =
+  '<svg class="meta-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2" /><path d="M8 3v4M16 3v4M4 10h16" /></svg>';
+
+function renderStats(meeting) {
+  const openQuestions = meeting.open_questions || [];
+  const counts = [
+    { count: meeting.key_decisions.length, label: "decision" },
+    { count: meeting.action_items.length, label: "action item" },
+    { count: openQuestions.length, label: "open question" },
+  ];
+  document.getElementById("result-stats").innerHTML = counts
+    .map((c) => `<span class="stat-pill"><strong>${c.count}</strong> ${c.label}${c.count === 1 ? "" : "s"}</span>`)
+    .join("");
+}
+
 function renderResult(meeting) {
   document.getElementById("result-title").textContent = meeting.title || meeting.filename;
   document.getElementById("result-filename").textContent = meeting.filename;
   document.getElementById("result-summary").textContent = meeting.summary || "—";
+  renderStats(meeting);
 
   const decisionsList = document.getElementById("result-decisions");
   decisionsList.innerHTML = "";
@@ -220,8 +248,14 @@ function renderResult(meeting) {
     const assignee = item.assignee || "Unassigned";
     const deadline = item.deadline || "No deadline";
     li.innerHTML =
-      `<input type="checkbox" disabled /> <span>${escapeHtml(item.task)}</span>` +
-      `<span class="meta">${escapeHtml(assignee)} · ${escapeHtml(deadline)}</span>`;
+      `<input type="checkbox" disabled /> ` +
+      `<div class="action-body">` +
+      `<span class="action-task">${escapeHtml(item.task)}</span>` +
+      `<span class="action-meta">` +
+      `<span class="meta-chip">${ICON_PERSON}${escapeHtml(assignee)}</span>` +
+      `<span class="meta-chip">${ICON_CALENDAR}${escapeHtml(deadline)}</span>` +
+      `</span>` +
+      `</div>`;
     actionsList.appendChild(li);
   }
 
@@ -258,7 +292,10 @@ async function loadHistory() {
       const li = document.createElement("li");
       li.className = "history-item";
       li.innerHTML =
-        `<span>${escapeHtml(meeting.title || meeting.filename)}</span>` +
+        `<span class="history-main">` +
+        `<span class="history-title">${escapeHtml(meeting.title || meeting.filename)}</span>` +
+        `<span class="history-time">${timeAgo(meeting.created_at)}</span>` +
+        `</span>` +
         `<span class="badge badge-${meeting.status.toLowerCase()}">${meeting.status}</span>`;
       li.addEventListener("click", () => openMeeting(meeting));
       historyList.appendChild(li);

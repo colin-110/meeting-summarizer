@@ -31,7 +31,12 @@
   <div class="container">
     <header>
       <div class="header-top">
-        <h1>Meeting Summarizer</h1>
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h3l2.5-7 4 14 2.5-9 2 2H21" /></svg>
+          </span>
+          <h1>Meeting Summarizer</h1>
+        </div>
         <button id="theme-toggle" type="button" aria-label="Switch to dark mode">
           <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <circle cx="12" cy="12" r="4"></circle>
@@ -59,12 +64,32 @@
         <button type="submit" id="upload-btn">Upload &amp; Summarize</button>
       </form>
       <p id="upload-error" class="error" hidden></p>
+
+      <div class="how-it-works">
+        <div class="how-step">
+          <span class="how-step-num">1</span>
+          <span>Upload your recording</span>
+        </div>
+        <svg class="how-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+        <div class="how-step">
+          <span class="how-step-num">2</span>
+          <span>AI transcribes &amp; summarizes it</span>
+        </div>
+        <svg class="how-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+        <div class="how-step">
+          <span class="how-step-num">3</span>
+          <span>Review decisions &amp; action items</span>
+        </div>
+      </div>
     </section>
 
     <section id="status-section" hidden>
       <div class="status-row">
         <span class="spinner"></span>
         <span id="status-text">Queued…</span>
+      </div>
+      <div class="progress-track">
+        <div class="progress-fill"></div>
       </div>
     </section>
 
@@ -73,15 +98,19 @@
 
       <div class="result-header">
         <h2 id="result-title"></h2>
-        <span class="badge badge-completed">Completed</span>
+        <span class="badge badge-completed">
+          <svg class="badge-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 13l4 4L19 7" /></svg>
+          Completed
+        </span>
       </div>
       <p class="result-filename" id="result-filename"></p>
+      <div class="stats-row" id="result-stats"></div>
 
       <h3>
         <svg class="h3-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="6" x2="20" y2="6" /><line x1="4" y1="12" x2="14" y2="12" /><line x1="4" y1="18" x2="18" y2="18" /></svg>
         Summary
       </h3>
-      <p id="result-summary"></p>
+      <p id="result-summary" class="summary-block"></p>
 
       <h3>
         <svg class="h3-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M8.5 12.5l2.5 2.5 5-5" /></svg>
@@ -111,6 +140,11 @@
       <p class="error" id="failure-message"></p>
       <button id="retry-btn" type="button">Try again</button>
     </section>
+
+    <footer class="site-footer">
+      Built with FastAPI, SQLite &amp; Groq —
+      <a href="https://github.com/colin-110/meeting-summarizer" target="_blank" rel="noopener noreferrer">view source on GitHub</a>
+    </footer>
   </div>
 
   <button id="history-tab" type="button" aria-label="Recent meetings">Recent&nbsp;meetings</button>
