@@ -4,12 +4,44 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Meeting Summarizer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+    rel="stylesheet"
+  />
   <link rel="stylesheet" href="/style.css" />
+  <script>
+    // Applied before first paint so a saved preference doesn't flash the
+    // wrong theme for a frame. No saved preference -> CSS falls back to
+    // the OS-level prefers-color-scheme media query on its own.
+    (function () {
+      try {
+        var saved = localStorage.getItem("theme");
+        if (saved === "light" || saved === "dark") {
+          document.documentElement.setAttribute("data-theme", saved);
+        }
+      } catch (err) {
+        // localStorage unavailable (private mode, etc.) — OS preference still applies via CSS.
+      }
+    })();
+  </script>
 </head>
 <body>
   <div class="container">
     <header>
-      <h1>Meeting Summarizer</h1>
+      <div class="header-top">
+        <h1>Meeting Summarizer</h1>
+        <button id="theme-toggle" type="button" aria-label="Switch to dark mode">
+          <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="4"></circle>
+            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+          </svg>
+          <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z" />
+          </svg>
+        </button>
+      </div>
       <p class="subtitle">Upload a recording — get a transcript, a summary, the decisions that were made, and action items.</p>
     </header>
 

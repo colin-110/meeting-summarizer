@@ -15,3 +15,8 @@ services:
         value: data
       - key: GROQ_API_KEY
         sync: false
+      # Set to the deployed Vercel URL (e.g. https://meeting-summarizer.vercel.app)
+      # once the frontend is split out there — leave unset while the frontend
+      # is still served from this same backend, since same-origin needs no CORS.
+      - key: ALLOWED_ORIGINS
+        sync: false

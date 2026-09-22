@@ -30,5 +30,12 @@ PORT = int(os.environ.get("PORT", "8000"))
 DATA_DIR = Path(os.environ.get("DATA_DIR", "data")).resolve()
 MAX_UPLOAD_MB = int(os.environ.get("MAX_UPLOAD_MB", "25"))
 
+# Comma-separated list of origins allowed to call the API cross-origin, e.g.
+# when the frontend is deployed separately (Vercel) from this backend
+# (Render). Empty by default: the frontend is served from this same process
+# via StaticFiles unless ALLOWED_ORIGINS says otherwise, so cross-origin
+# requests have no reason to be allowed until they do.
+ALLOWED_ORIGINS = [origin.strip() for origin in os.environ.get("ALLOWED_ORIGINS", "").split(",") if origin.strip()]
+
 DATABASE_PATH = DATA_DIR / "app.db"
 AUDIO_DIR = DATA_DIR / "audio"
