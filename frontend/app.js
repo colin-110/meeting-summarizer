@@ -1,9 +1,8 @@
 // Relative path everywhere this frontend shares an origin with the API —
 // local dev, and the copy Render's own StaticFiles serves alongside its
 // backend. Only the copy actually split out onto Vercel is truly
-// cross-origin, so that's the only case that needs the backend's full URL —
-// fill this in once the Render deploy exists, nothing else here needs to change.
-const RENDER_API_ORIGIN = "https://REPLACE-ME.onrender.com";
+// cross-origin, so that's the only case that needs the backend's full URL.
+const RENDER_API_ORIGIN = "https://meeting-summarizer-xr53.onrender.com";
 const API_ORIGIN = window.location.hostname.endsWith(".vercel.app") ? RENDER_API_ORIGIN : "";
 const API_BASE = `${API_ORIGIN}/api/v1/meetings`;
 const POLL_INTERVAL_MS = 2000;
