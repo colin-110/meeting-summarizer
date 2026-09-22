@@ -1,4 +1,10 @@
-const API_BASE = "/api/v1/meetings";
+// Relative path when frontend + backend share an origin (local dev, or the
+// backend's own StaticFiles copy of this frontend). Once the frontend is
+// split out to its own host (Vercel), it needs the backend's absolute URL —
+// fill this in once the Render deploy exists, nothing else here needs to change.
+const RENDER_API_ORIGIN = "https://REPLACE-ME.onrender.com";
+const API_ORIGIN = ["localhost", "127.0.0.1"].includes(window.location.hostname) ? "" : RENDER_API_ORIGIN;
+const API_BASE = `${API_ORIGIN}/api/v1/meetings`;
 const POLL_INTERVAL_MS = 2000;
 
 const uploadForm = document.getElementById("upload-form");
@@ -13,6 +19,8 @@ const resultSection = document.getElementById("result-section");
 const errorSection = document.getElementById("error-section");
 const failureMessage = document.getElementById("failure-message");
 
+const themeToggle = document.getElementById("theme-toggle");
+
 const historyList = document.getElementById("history-list");
 const historyTab = document.getElementById("history-tab");
 const historyPanel = document.getElementById("history-panel");
@@ -20,6 +28,30 @@ const historyOverlay = document.getElementById("history-overlay");
 const historyCloseBtn = document.getElementById("history-close-btn");
 
 let pollTimer = null;
+
+function effectiveTheme() {
+  const explicit = document.documentElement.getAttribute("data-theme");
+  if (explicit) return explicit;
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function updateToggleIcon(theme) {
+  themeToggle.classList.toggle("is-dark", theme === "dark");
+  themeToggle.setAttribute("aria-label", theme === "dark" ? "Switch to light mode" : "Switch to dark mode");
+}
+
+themeToggle.addEventListener("click", () => {
+  const next = effectiveTheme() === "dark" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", next);
+  try {
+    localStorage.setItem("theme", next);
+  } catch (err) {
+    // localStorage unavailable — theme just won't persist past this page load.
+  }
+  updateToggleIcon(next);
+});
+
+updateToggleIcon(effectiveTheme());
 
 function openHistory() {
   historyPanel.hidden = false;

@@ -3,10 +3,12 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from backend.app.api.health import router as health_router
 from backend.app.api.meetings import router as meetings_router
+from backend.app.core import config
 from backend.app.core.logging import configure_logging, get_logger
 from backend.app.database.init_db import init_db
 from backend.app.database.meetings_repo import fail_stuck_processing
@@ -32,6 +34,17 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Meeting Summarizer", lifespan=lifespan)
+
+if config.ALLOWED_ORIGINS:
+    # Only needed when the frontend is deployed separately from this API
+    # (e.g. Vercel + Render) — same-origin requests never hit CORS at all.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=config.ALLOWED_ORIGINS,
+        allow_methods=["GET", "POST"],
+        allow_headers=["*"],
+    )
+
 app.include_router(health_router)
 app.include_router(meetings_router)
 
