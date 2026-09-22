@@ -81,12 +81,22 @@ def list_meetings(db_path: Optional[Path] = None) -> list[Meeting]:
     return [_row_to_meeting(row) for row in rows]
 
 
-def find_completed_by_hash(file_hash: str, db_path: Optional[Path] = None) -> Optional[Meeting]:
+def find_leader_by_hash(file_hash: str, db_path: Optional[Path] = None) -> Optional[Meeting]:
+    """The canonical meeting for this content: the earliest-created,
+    non-FAILED meeting sharing this file_hash.
+
+    A new upload of identical audio defers to whichever meeting this
+    returns instead of reprocessing: reusing its result directly if it's
+    already COMPLETED, or waiting on it if it's still QUEUED/PROCESSING
+    (see processing_service.run). If this *is* the earliest meeting for
+    the hash, the caller is the leader and does the real work.
+    """
     conn = get_connection(db_path)
     try:
         row = conn.execute(
-            "SELECT * FROM meetings WHERE file_hash = ? AND status = ? ORDER BY created_at DESC LIMIT 1",
-            (file_hash, MeetingStatus.COMPLETED),
+            "SELECT * FROM meetings WHERE file_hash = ? AND status != ? "
+            "ORDER BY created_at ASC, id ASC LIMIT 1",
+            (file_hash, MeetingStatus.FAILED),
         ).fetchone()
     finally:
         conn.close()

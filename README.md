@@ -59,10 +59,10 @@ sequenceDiagram
     API-->>Browser: 201 {id, status: QUEUED}
 
     BG->>Proc: run(meeting_id)
-    Proc->>DB: find_completed_by_hash(file_hash)
-    alt duplicate content already completed
-        Proc->>DB: reuse cached transcript/summary
-    else new content
+    Proc->>DB: find_leader_by_hash(file_hash)
+    alt earlier upload of identical content is completed or in flight
+        Proc->>DB: wait for it (if needed), then reuse its result
+    else this is the first upload of this content
         Proc->>Groq: transcribe (Whisper)
         Groq-->>Proc: transcript
         Proc->>Groq: summarize (gpt-oss-120b, strict schema)
@@ -331,7 +331,7 @@ test. Everything ends in a clean `FAILED` status with a readable
 | Silent or no-speech audio | After transcription, `processing_service.py` | Whisper doesn't return empty for silence — it hallucinates short boilerplate (confirmed live: 2 seconds of true digital silence came back as `" Thank you."`). A minimum-transcript-length check catches this before it reaches the summarizer, rather than producing a summary from a hallucinated sentence |
 | Network blip / rate limit / upstream 5xx from Groq | `utils/retry.py`, used by both ASR and LLM calls | Retried automatically (backoff, 3 attempts); only surfaces as `FAILED` if all retries are exhausted |
 | Malformed LLM JSON response | `summarization_service._validate_result` | Rejected and reported, even though `strict: true` on `gpt-oss-120b` should already guarantee valid shape — never trust an external system blindly |
-| Two identical files uploaded before either finishes processing | `find_completed_by_hash` only matches `COMPLETED` rows | Both process independently (a few duplicate provider calls); the dedupe only kicks in for *subsequent* uploads of the same file, once one has actually completed. A known, accepted trade-off — real locking would add complexity out of proportion to what this project needs |
+| Two identical files uploaded before either finishes processing | `find_leader_by_hash` — the earliest-created, non-`FAILED` meeting for a hash is the "leader" | The second upload doesn't reprocess: it waits on the leader (polling, no broker) and reuses its result once it completes, or gets the same failure if the leader fails. If the leader's process dies and never resolves, the follower gives up after 5 minutes and processes independently rather than waiting forever. Confirmed live: two identical (invalid) files uploaded back-to-back produced exactly one real Groq call — the second meeting's error was `Duplicate of another upload that failed: ...`, not its own provider call |
 | `GROQ_API_KEY` missing | App startup | Logged as a warning immediately (`main.py`), instead of only failing silently on the first upload |
 | Unknown meeting id | `GET /api/v1/meetings/{id}` and `/status` | `404` with a message naming the id that wasn't found |
 | Pathologically long transcript (well past a normal meeting) | `summarization_service._prepare_transcript` | Truncated to `_MAX_TRANSCRIPT_CHARS` before it reaches the LLM, with a note appended so the model knows the transcript was cut — bounds latency/cost instead of sending an unbounded prompt |
