@@ -17,6 +17,22 @@ def test_health_endpoint_reports_ok(tmp_path, monkeypatch):
     assert body["database"] == "ok"
 
 
+def test_health_endpoint_supports_head(tmp_path, monkeypatch):
+    # Uptime monitors (e.g. UptimeRobot) default to HEAD requests. A plain
+    # @router.get(...) doesn't guarantee HEAD support depends on the
+    # framework version — confirmed live that it didn't here, which made
+    # the monitor report the service as down every single check even
+    # though GET worked fine. api_route with explicit methods fixes it.
+    monkeypatch.setattr(config, "DATABASE_PATH", tmp_path / "test.db")
+
+    from backend.app.main import app
+
+    with TestClient(app) as client:
+        response = client.head("/health")
+
+    assert response.status_code == 200
+
+
 def test_startup_recovers_meetings_stuck_in_processing(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "DATABASE_PATH", tmp_path / "test.db")
 
