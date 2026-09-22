@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: meeting-summarizer
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: MAX_UPLOAD_MB
+        value: 25
+      - key: DATA_DIR
+        value: data
+      - key: GROQ_API_KEY
+        sync: false
