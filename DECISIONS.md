@@ -18,7 +18,7 @@ what a larger version of it might eventually need:
 | Original plan | What it became | Why |
 | --- | --- | --- |
 | Celery + Redis broker | FastAPI `BackgroundTasks` | One process, one upload handler that hands off work — a broker is solving a scaling problem this project doesn't have |
-| Redis cache | A `file_hash` column + `find_completed_by_hash` | The only caching need is "don't re-run the pipeline on identical audio," which a content hash on the existing database already gives for free |
+| Redis cache | A `file_hash` column + `find_leader_by_hash` | The only caching need is "don't re-run the pipeline on identical audio," which a content hash on the existing database already gives for free |
 | Docker Compose | Nothing — a single `uvicorn` process | Orchestration exists to coordinate multiple services; there's only one here |
 | React frontend | Plain HTML/CSS/vanilla JS, served via `StaticFiles` | No state complex enough to need a framework — one form, one poll loop, one result view |
 
@@ -218,13 +218,12 @@ leave them as known-but-unfixed:
 - **A crash or restart mid-processing orphaned a meeting forever.**
   `BackgroundTasks` runs in-process with no broker and nothing to resume a
   job — if the process died while a meeting was `PROCESSING`, that row had
-  no path back to `COMPLETED` or `FAILED`; it just sat there indefinitely,
-  and dedupe couldn't rescue it either since `find_completed_by_hash` only
-  matches `COMPLETED` rows. Fixed with `fail_stuck_processing()`, called
-  once at startup: any meeting still `PROCESSING` from before the restart
-  is swept to `FAILED` with an explicit "interrupted by a restart" message.
-  No watchdog, no polling — a single query at the moment it's actually
-  needed (startup, right after `init_db()`).
+  no path back to `COMPLETED` or `FAILED`; it just sat there indefinitely.
+  Fixed with `fail_stuck_processing()`, called once at startup: any meeting
+  still `PROCESSING` from before the restart is swept to `FAILED` with an
+  explicit "interrupted by a restart" message. No watchdog, no polling — a
+  single query at the moment it's actually needed (startup, right after
+  `init_db()`).
 - **The upload endpoint had no limit on who could call it or how often.**
   Fine for a private dev server, not fine for a link handed to anyone —
   one client looping uploads could exhaust the shared Groq free-tier quota
@@ -236,20 +235,35 @@ leave them as known-but-unfixed:
   ever exposed directly to the internet without a trusted proxy in front,
   which is why that assumption is written down here rather than left
   implicit in the code.
+- **Two identical files uploaded before either finished processing both
+  ran the pipeline independently.** This was originally accepted as a
+  trade-off (see the old entry in "Known trade-offs" below, kept in git
+  history) on the reasoning that real locking would add complexity out of
+  proportion to what this project needs — but a much cheaper fix than
+  locking was available: `find_completed_by_hash` became
+  `find_leader_by_hash`, which returns the *earliest-created, non-`FAILED`*
+  meeting for a hash rather than only a `COMPLETED` one. A second upload of
+  identical content now finds that leader immediately, whatever state it's
+  in, and waits on it (polling the DB, no broker) instead of starting its
+  own transcription/summarization. If the leader completes, the follower
+  copies its result; if the leader fails, the follower reports the same
+  failure; if the leader's process dies and never resolves within 5
+  minutes, the follower gives up waiting and processes independently
+  rather than hanging forever. Verified live: two identical (deliberately
+  invalid) files uploaded back-to-back produced exactly one real Groq call
+  — the second meeting's `error_message` was `Duplicate of another upload
+  that failed: ...`, confirmed via the server log line `propagated failure
+  from concurrent duplicate`, not a second independent provider call.
 
-Both were verified live, the same standard the rest of this project holds
-itself to: killed the server mid-`PROCESSING` and confirmed the meeting
-came back `FAILED` on restart; sent 11 rapid uploads from one address and
-confirmed the 11th came back `429` while the first 10 reached normal
-validation.
+Every one of these three was verified live, the same standard the rest of
+this project holds itself to: killed the server mid-`PROCESSING` and
+confirmed the meeting came back `FAILED` on restart; sent 11 rapid uploads
+from one address and confirmed the 11th came back `429` while the first 10
+reached normal validation; uploaded identical invalid audio twice at once
+and confirmed only one real Groq call happened.
 
 ## Known trade-offs (accepted, not oversights)
 
-- **Two identical files uploaded before either finishes** both process
-  independently — `find_completed_by_hash` only matches `COMPLETED` rows,
-  so the dedupe only kicks in for uploads *after* one has actually
-  finished. Real locking would add complexity out of proportion to what
-  this project needs.
 - **No audio chunking for very long meetings.** `gpt-oss-120b`'s context
   window comfortably fits a normal meeting transcript, so chunking was
   deliberately left out rather than adding complexity for an input size

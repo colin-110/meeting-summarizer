@@ -3,7 +3,7 @@
 Storage is content-addressed: a file is written under its own sha256
 hash, not the client-supplied name. That sidesteps path-traversal and
 filename-collision concerns entirely, and doubles as the dedupe key
-that database.meetings_repo.find_completed_by_hash relies on instead
+that database.meetings_repo.find_leader_by_hash relies on instead
 of a Redis cache.
 """
 

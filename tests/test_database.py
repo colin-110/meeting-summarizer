@@ -3,7 +3,7 @@ from backend.app.database.init_db import init_db
 from backend.app.database.meetings_repo import (
     create_meeting,
     fail_stuck_processing,
-    find_completed_by_hash,
+    find_leader_by_hash,
     get_meeting,
     save_summary,
     save_transcript,
@@ -71,16 +71,36 @@ def test_save_transcript_and_summary(tmp_path):
     assert result.action_items[0]["task"] == "Follow up"
 
 
-def test_find_completed_by_hash_only_matches_completed(tmp_path):
+def test_find_leader_by_hash_returns_earliest_non_failed_meeting(tmp_path):
     db_path = _fresh_db(tmp_path)
-    meeting = create_meeting("call.mp3", "duphash", "audio/call.mp3", db_path=db_path)
+    first = create_meeting("call.mp3", "duphash", "audio/call.mp3", db_path=db_path)
+    second = create_meeting("call-copy.mp3", "duphash", "audio/call-copy.mp3", db_path=db_path)
 
-    assert find_completed_by_hash("duphash", db_path=db_path) is None
+    # Still just UPLOADED, not completed — the earliest one is still the leader.
+    leader = find_leader_by_hash("duphash", db_path=db_path)
+    assert leader.id == first.id
 
-    update_status(meeting.id, MeetingStatus.COMPLETED, db_path=db_path)
-    match = find_completed_by_hash("duphash", db_path=db_path)
-    assert match is not None
-    assert match.id == meeting.id
+    update_status(first.id, MeetingStatus.COMPLETED, db_path=db_path)
+    leader = find_leader_by_hash("duphash", db_path=db_path)
+    assert leader.id == first.id
+    assert second.id  # second was never consulted, just documenting it exists
+
+
+def test_find_leader_by_hash_skips_failed_meetings(tmp_path):
+    db_path = _fresh_db(tmp_path)
+    first = create_meeting("call.mp3", "duphash", "audio/call.mp3", db_path=db_path)
+    second = create_meeting("call-copy.mp3", "duphash", "audio/call-copy.mp3", db_path=db_path)
+
+    update_status(first.id, MeetingStatus.FAILED, error_message="boom", db_path=db_path)
+
+    leader = find_leader_by_hash("duphash", db_path=db_path)
+    assert leader.id == second.id
+
+
+def test_find_leader_by_hash_returns_none_for_unknown_hash(tmp_path):
+    db_path = _fresh_db(tmp_path)
+
+    assert find_leader_by_hash("no-such-hash", db_path=db_path) is None
 
 
 def test_save_summary_persists_title_and_open_questions(tmp_path):

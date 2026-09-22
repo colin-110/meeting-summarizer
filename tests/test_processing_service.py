@@ -1,3 +1,6 @@
+import threading
+import time
+
 from backend.app.core import config
 from backend.app.database.init_db import init_db
 from backend.app.database.meetings_repo import (
@@ -144,3 +147,85 @@ def test_run_reuses_cached_result_for_duplicate_hash(tmp_path, monkeypatch):
     assert result.status == MeetingStatus.COMPLETED
     assert result.transcript == "original transcript"
     assert result.summary == "original summary"
+
+
+def _fail_if_called(*args, **kwargs):
+    raise AssertionError("should not call the real ASR/LLM while waiting on another in-flight upload")
+
+
+def test_run_waits_for_in_flight_duplicate_then_reuses_its_result(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    monkeypatch.setattr(processing_service, "_FOLLOW_POLL_SECONDS", 0.01)
+
+    leader = create_meeting("call.mp3", "duphash", "audio/call.mp3")
+    update_status(leader.id, MeetingStatus.PROCESSING)  # still in flight, not COMPLETED yet
+    follower = create_meeting("call-copy.mp3", "duphash", "audio/call-copy.mp3")
+
+    monkeypatch.setattr(processing_service, "transcribe", _fail_if_called)
+    monkeypatch.setattr(processing_service, "summarize", _fail_if_called)
+
+    def _complete_leader_shortly():
+        time.sleep(0.05)
+        save_transcript(leader.id, "leader transcript")
+        save_summary(leader.id, "leader summary", ["d1"], [])
+        update_status(leader.id, MeetingStatus.COMPLETED)
+
+    threading.Thread(target=_complete_leader_shortly).start()
+
+    processing_service.run(follower.id)
+
+    result = get_meeting(follower.id)
+    assert result.status == MeetingStatus.COMPLETED
+    assert result.transcript == "leader transcript"
+    assert result.summary == "leader summary"
+
+
+def test_run_propagates_failure_from_in_flight_duplicate(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    monkeypatch.setattr(processing_service, "_FOLLOW_POLL_SECONDS", 0.01)
+
+    leader = create_meeting("call.mp3", "duphash", "audio/call.mp3")
+    update_status(leader.id, MeetingStatus.PROCESSING)
+    follower = create_meeting("call-copy.mp3", "duphash", "audio/call-copy.mp3")
+
+    monkeypatch.setattr(processing_service, "transcribe", _fail_if_called)
+    monkeypatch.setattr(processing_service, "summarize", _fail_if_called)
+
+    def _fail_leader_shortly():
+        time.sleep(0.05)
+        update_status(leader.id, MeetingStatus.FAILED, error_message="upstream ASR error")
+
+    threading.Thread(target=_fail_leader_shortly).start()
+
+    processing_service.run(follower.id)
+
+    result = get_meeting(follower.id)
+    assert result.status == MeetingStatus.FAILED
+    assert "upstream ASR error" in result.error_message
+
+
+def test_run_gives_up_and_processes_independently_if_leader_never_resolves(tmp_path, monkeypatch):
+    # Simulates a leader whose process crashed mid-PROCESSING — the follower
+    # shouldn't wait forever for a restart's fail_stuck_processing sweep.
+    _setup_db(tmp_path, monkeypatch)
+    monkeypatch.setattr(processing_service, "_FOLLOW_POLL_SECONDS", 0.01)
+    monkeypatch.setattr(processing_service, "_FOLLOW_MAX_WAIT_SECONDS", 0.03)
+
+    leader = create_meeting("call.mp3", "duphash", "audio/call.mp3")
+    update_status(leader.id, MeetingStatus.PROCESSING)  # never resolves
+    follower = create_meeting("call-copy.mp3", "duphash", "audio/call-copy.mp3")
+
+    monkeypatch.setattr(
+        processing_service, "transcribe", lambda path: "hello world, this is the start of the meeting"
+    )
+    monkeypatch.setattr(
+        processing_service,
+        "summarize",
+        lambda transcript: {"summary": "independent summary", "key_decisions": [], "action_items": []},
+    )
+
+    processing_service.run(follower.id)
+
+    result = get_meeting(follower.id)
+    assert result.status == MeetingStatus.COMPLETED
+    assert result.summary == "independent summary"
