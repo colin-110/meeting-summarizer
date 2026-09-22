@@ -11,6 +11,9 @@ const uploadForm = document.getElementById("upload-form");
 const audioInput = document.getElementById("audio-input");
 const uploadBtn = document.getElementById("upload-btn");
 const uploadError = document.getElementById("upload-error");
+const dropzone = document.getElementById("dropzone");
+const dropzoneText = document.getElementById("dropzone-text");
+const DEFAULT_DROPZONE_HTML = dropzoneText.innerHTML;
 
 const uploadSection = document.getElementById("upload-section");
 const statusSection = document.getElementById("status-section");
@@ -74,19 +77,51 @@ function showOnly(section) {
   }
 }
 
-function resetToUpload() {
-  clearInterval(pollTimer);
-  uploadForm.reset();
-  uploadError.hidden = true;
-  showOnly(uploadSection);
-  loadHistory();
-}
-
 function escapeHtml(str) {
   const div = document.createElement("div");
   div.textContent = str;
   return div.innerHTML;
 }
+
+function showSelectedFile(file) {
+  dropzoneText.innerHTML = file ? escapeHtml(file.name) : DEFAULT_DROPZONE_HTML;
+}
+
+function resetToUpload() {
+  clearInterval(pollTimer);
+  uploadForm.reset();
+  showSelectedFile(null);
+  uploadError.hidden = true;
+  showOnly(uploadSection);
+  loadHistory();
+}
+
+audioInput.addEventListener("change", () => {
+  showSelectedFile(audioInput.files[0]);
+});
+
+for (const eventName of ["dragover", "dragenter"]) {
+  dropzone.addEventListener(eventName, (event) => {
+    event.preventDefault();
+    dropzone.classList.add("is-dragover");
+  });
+}
+
+for (const eventName of ["dragleave", "dragend"]) {
+  dropzone.addEventListener(eventName, () => {
+    dropzone.classList.remove("is-dragover");
+  });
+}
+
+dropzone.addEventListener("drop", (event) => {
+  event.preventDefault();
+  dropzone.classList.remove("is-dragover");
+  const file = event.dataTransfer.files[0];
+  if (file) {
+    audioInput.files = event.dataTransfer.files;
+    showSelectedFile(file);
+  }
+});
 
 uploadForm.addEventListener("submit", async (event) => {
   event.preventDefault();

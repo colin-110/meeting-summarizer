@@ -47,7 +47,15 @@
 
     <section id="upload-section">
       <form id="upload-form">
-        <input type="file" id="audio-input" accept=".mp3,.wav,.m4a" required />
+        <label id="dropzone" for="audio-input" class="dropzone">
+          <input type="file" id="audio-input" class="visually-hidden" accept=".mp3,.wav,.m4a" required />
+          <svg class="dropzone-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 15V4M12 4l-4 4M12 4l4 4" />
+            <path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" />
+          </svg>
+          <span class="dropzone-text" id="dropzone-text">Drag &amp; drop your recording, or <span class="dropzone-link">browse</span></span>
+          <span class="dropzone-hint">MP3, WAV, or M4A</span>
+        </label>
         <button type="submit" id="upload-btn">Upload &amp; Summarize</button>
       </form>
       <p id="upload-error" class="error" hidden></p>
@@ -69,16 +77,28 @@
       </div>
       <p class="result-filename" id="result-filename"></p>
 
-      <h3>Summary</h3>
+      <h3>
+        <svg class="h3-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="6" x2="20" y2="6" /><line x1="4" y1="12" x2="14" y2="12" /><line x1="4" y1="18" x2="18" y2="18" /></svg>
+        Summary
+      </h3>
       <p id="result-summary"></p>
 
-      <h3>Key Decisions</h3>
+      <h3>
+        <svg class="h3-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M8.5 12.5l2.5 2.5 5-5" /></svg>
+        Key Decisions
+      </h3>
       <ul id="result-decisions"></ul>
 
-      <h3>Action Items</h3>
+      <h3>
+        <svg class="h3-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11" /><path d="M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2" /></svg>
+        Action Items
+      </h3>
       <ul id="result-actions" class="action-list"></ul>
 
-      <h3>Open Questions</h3>
+      <h3>
+        <svg class="h3-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M9.5 9a2.5 2.5 0 0 1 5 0c0 1.5-2.5 2-2.5 3.5" /><line x1="12" y1="17" x2="12.01" y2="17" /></svg>
+        Open Questions
+      </h3>
       <ul id="result-open-questions"></ul>
 
       <details class="transcript-details">
