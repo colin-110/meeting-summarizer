@@ -3,16 +3,17 @@
 A running record of the non-obvious problems, decisions, and trade-offs made
 while building this project — the *why* behind the code, not the *what*
 (the code and commit history already say what). Kept separate from the
-[README](README.md) so that stays a clean, evaluator-facing overview.
+[README](README.md) so that stays a clean overview for anyone skimming the
+project.
 
 ## Architecture: cutting the stack down
 
 The first draft of this project's architecture used Docker, React, Redis,
-and Celery — a reasonable "production" shape, but wrong for this
-assignment. The submission guidelines explicitly ask for minimal, native
-dependencies ("use only what is strictly required"), so each piece of
-infrastructure was reconsidered against what the project actually needs at
-this scale, not what a larger version of it might eventually need:
+and Celery — a reasonable "production" shape, but oversized for what this
+project actually needs. The goal from the start was to keep dependencies
+minimal and native wherever possible, so each piece of infrastructure was
+reconsidered against what the project actually needs at this scale, not
+what a larger version of it might eventually need:
 
 | Original plan | What it became | Why |
 | --- | --- | --- |
@@ -205,6 +206,42 @@ than permanently occupying page space.
   visible in the repo's own history. Each phase, and each meaningful fix
   after, landed as its own commit with tests updated in the same change,
   not bolted on afterward.
+
+## Hardening after the initial build: what "production-ready" gaps looked like
+
+Once the pipeline was feature-complete, the honest answer to "what would
+you change before calling this production-ready" was "nothing yet" — the
+app worked, but two real gaps existed silently. Both were cheap enough to
+close without pulling in new infrastructure, so there was no reason to
+leave them as known-but-unfixed:
+
+- **A crash or restart mid-processing orphaned a meeting forever.**
+  `BackgroundTasks` runs in-process with no broker and nothing to resume a
+  job — if the process died while a meeting was `PROCESSING`, that row had
+  no path back to `COMPLETED` or `FAILED`; it just sat there indefinitely,
+  and dedupe couldn't rescue it either since `find_completed_by_hash` only
+  matches `COMPLETED` rows. Fixed with `fail_stuck_processing()`, called
+  once at startup: any meeting still `PROCESSING` from before the restart
+  is swept to `FAILED` with an explicit "interrupted by a restart" message.
+  No watchdog, no polling — a single query at the moment it's actually
+  needed (startup, right after `init_db()`).
+- **The upload endpoint had no limit on who could call it or how often.**
+  Fine for a private dev server, not fine for a link handed to anyone —
+  one client looping uploads could exhaust the shared Groq free-tier quota
+  and break the demo for everyone else. Fixed with an in-memory per-client
+  sliding-window limiter (`utils/rate_limit.py`, 10 uploads / 10 minutes),
+  keyed off `X-Forwarded-For` rather than the raw socket address, since the
+  app is only ever deployed behind a platform-managed proxy (Render) that
+  sets that header itself — trusting it would be unsafe if the app were
+  ever exposed directly to the internet without a trusted proxy in front,
+  which is why that assumption is written down here rather than left
+  implicit in the code.
+
+Both were verified live, the same standard the rest of this project holds
+itself to: killed the server mid-`PROCESSING` and confirmed the meeting
+came back `FAILED` on restart; sent 11 rapid uploads from one address and
+confirmed the 11th came back `429` while the first 10 reached normal
+validation.
 
 ## Known trade-offs (accepted, not oversights)
 
