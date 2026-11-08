@@ -8,6 +8,7 @@ Splitting into fixed-length chunks lets them be transcribed in parallel.
 """
 
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -43,33 +44,80 @@ def ffmpeg_exe() -> str:
         raise AudioProcessingError("ffmpeg is not installed on the server.") from exc
 
 
+_DURATION_RE = re.compile(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)")
+_SILENCE_START_RE = re.compile(r"silence_start:\s*(-?\d+(?:\.\d+)?)")
+_SILENCE_END_RE = re.compile(r"silence_end:\s*(-?\d+(?:\.\d+)?)")
+
+
+def _run(cmd: list[str], timeout: int = 900) -> subprocess.CompletedProcess:
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        raise AudioProcessingError("Audio conversion timed out.") from exc
+
+
+def _probe_silences(path: Path) -> tuple[float, list[float]]:
+    """Return (duration_seconds, midpoints_of_pauses) for a compressed file."""
+    result = _run([
+        ffmpeg_exe(), "-nostdin", "-hide_banner", "-i", str(path),
+        "-af", "silencedetect=noise=-35dB:d=0.4", "-f", "null", "-",
+    ])
+    m = _DURATION_RE.search(result.stderr)
+    duration = int(m[1]) * 3600 + int(m[2]) * 60 + float(m[3]) if m else 0.0
+    starts = [float(x) for x in _SILENCE_START_RE.findall(result.stderr)]
+    ends = [float(x) for x in _SILENCE_END_RE.findall(result.stderr)]
+    return duration, [(max(a, 0) + b) / 2 for a, b in zip(starts, ends)]
+
+
+def pick_cuts(duration: float, pauses: list[float], chunk_seconds: float) -> list[float]:
+    """Cut points roughly every chunk_seconds, each snapped to the nearest
+    pause in speech so a chunk boundary never lands mid-word. Falls back to
+    the plain time grid where there's no pause nearby."""
+    window = min(60.0, chunk_seconds * 0.3)
+    cuts: list[float] = []
+    target = chunk_seconds
+    # Don't leave a tiny trailing chunk: stop once less than 25% of a chunk remains.
+    while target < duration - chunk_seconds * 0.25:
+        nearby = [p for p in pauses if abs(p - target) <= window and p > (cuts[-1] if cuts else 0) + 1]
+        cut = min(nearby, key=lambda p: abs(p - target)) if nearby else target
+        cuts.append(round(cut, 2))
+        target = cut + chunk_seconds
+    return cuts
+
+
 def split_and_compress(audio_path: str, work_dir: Path) -> list[Chunk]:
-    """Convert to 16 kHz mono MP3 and split into CHUNK_SECONDS pieces.
+    """Convert to 16 kHz mono MP3 and split into ~CHUNK_SECONDS pieces.
 
     Returns the chunks in order, each with its start offset in the original
     recording (used to turn chunk-relative timestamps into absolute ones).
     """
-    pattern = work_dir / "chunk_%04d.mp3"
-    cmd = [
-        ffmpeg_exe(), "-nostdin", "-v", "error", "-y",
-        "-i", audio_path,
-        "-vn", "-ac", "1", "-ar", "16000",
-        "-c:a", "libmp3lame", "-b:a", "32k",
-        "-f", "segment", "-segment_time", str(config.CHUNK_SECONDS),
-        "-reset_timestamps", "1",
-        str(pattern),
-    ]
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
-    except subprocess.TimeoutExpired as exc:
-        raise AudioProcessingError("Audio conversion timed out.") from exc
-
-    paths = sorted(work_dir.glob("chunk_*.mp3"))
-    if result.returncode != 0 or not paths:
+    full = work_dir / "full.mp3"
+    result = _run([
+        ffmpeg_exe(), "-nostdin", "-v", "error", "-y", "-i", audio_path,
+        "-vn", "-ac", "1", "-ar", "16000", "-c:a", "libmp3lame", "-b:a", "32k", str(full),
+    ])
+    if result.returncode != 0 or not full.exists() or full.stat().st_size == 0:
         raise AudioProcessingError(
             "Could not read this audio file — it may be corrupted or not real audio."
         )
-    return [Chunk(path=p, offset_seconds=i * config.CHUNK_SECONDS) for i, p in enumerate(paths)]
+
+    chunk_seconds = config.CHUNK_SECONDS
+    duration, pauses = _probe_silences(full)
+    if duration <= chunk_seconds * 1.25:
+        return [Chunk(path=full, offset_seconds=0.0)]
+
+    cuts = pick_cuts(duration, pauses, chunk_seconds)
+    pattern = work_dir / "chunk_%04d.mp3"
+    result = _run([
+        ffmpeg_exe(), "-nostdin", "-v", "error", "-y", "-i", str(full), "-c", "copy",
+        "-f", "segment", "-segment_times", ",".join(str(c) for c in cuts),
+        "-reset_timestamps", "1", str(pattern),
+    ])
+    paths = sorted(work_dir.glob("chunk_*.mp3"))
+    if result.returncode != 0 or len(paths) != len(cuts) + 1:
+        raise AudioProcessingError("Could not split this audio file.")
+    full.unlink(missing_ok=True)
+    return [Chunk(path=p, offset_seconds=o) for p, o in zip(paths, [0.0, *cuts])]
 
 
 def make_work_dir() -> Path:

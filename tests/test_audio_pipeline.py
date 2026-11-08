@@ -100,3 +100,34 @@ def test_transcribe_drops_hallucinated_silence_segments(tmp_path):
     result = transcribe(str(audio), client=client)
     assert result["text"] == "real words"
     assert len(result["segments"]) == 1
+
+
+def test_pick_cuts_snaps_to_pauses_and_falls_back_to_grid():
+    from backend.app.services.audio_service import pick_cuts
+
+    assert pick_cuts(25, [], 10) == [10, 20]                       # no pauses: plain grid
+    assert pick_cuts(30, [12.5], 10) == [12.5, 22.5]               # snaps to the pause, then re-targets from there
+    assert pick_cuts(25, [40.0], 10) == [10, 20]                   # far-away pause ignored
+    assert pick_cuts(21, [], 10) == [10]                           # no tiny trailing chunk
+    assert pick_cuts(5, [2.0], 10) == []                           # short audio: one chunk
+
+
+def test_split_cuts_at_a_real_pause_not_mid_speech(tmp_path, monkeypatch):
+    """Two 12s tones separated by 1s of silence: the cut must land in the gap."""
+    monkeypatch.setattr(config, "CHUNK_SECONDS", 10)
+    path = tmp_path / "gap.wav"
+    subprocess.run(
+        [audio_service.ffmpeg_exe(), "-v", "error",
+         "-f", "lavfi", "-i", "sine=frequency=440:duration=12",
+         "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono:d=1",
+         "-f", "lavfi", "-i", "sine=frequency=440:duration=12",
+         "-filter_complex", "[0][1][2]concat=n=3:v=0:a=1", str(path)],
+        check=True,
+    )
+    work = tmp_path / "work"
+    work.mkdir()
+    chunks = audio_service.split_and_compress(str(path), work)
+
+    assert len(chunks) >= 2
+    assert abs(chunks[1].offset_seconds - 12.5) < 0.4  # inside the 12.0-13.0 gap
+    assert not (work / "full.mp3").exists()
