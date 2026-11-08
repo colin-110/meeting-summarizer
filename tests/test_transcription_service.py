@@ -35,7 +35,7 @@ def test_transcribe_returns_text_on_success(tmp_path):
         return type("Result", (), {"text": "hello from the meeting"})()
 
     client = _client_with(create)
-    assert transcribe(str(audio_path), client=client) == "hello from the meeting"
+    assert transcribe(str(audio_path), client=client)["text"] == "hello from the meeting"
 
 
 def test_transcribe_retries_transient_errors_then_succeeds(tmp_path, monkeypatch):
@@ -52,7 +52,7 @@ def test_transcribe_retries_transient_errors_then_succeeds(tmp_path, monkeypatch
         return type("Result", (), {"text": "ok"})()
 
     client = _client_with(create)
-    assert transcribe(str(audio_path), client=client) == "ok"
+    assert transcribe(str(audio_path), client=client)["text"] == "ok"
     assert calls["count"] == 3
 
 

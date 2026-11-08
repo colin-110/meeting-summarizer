@@ -1,23 +1,27 @@
 """Orchestrates one meeting's pipeline: transcribe -> summarize -> persist.
 
-Called from a FastAPI BackgroundTask, so it runs after the upload
-response has already been sent — no broker, no separate worker
-process, just a function call on a thread from Starlette's pool.
+Called by the worker threads (services/worker.py), which pull jobs from
+the SQLite-backed queue — so a job survives a restart instead of being lost.
 """
 
 import time
+from pathlib import Path
 
+from backend.app.core import config
 from backend.app.core.logging import get_logger
 from backend.app.database.meetings_repo import (
+    audio_in_use,
     find_leader_by_hash,
     get_meeting,
+    save_segments,
     save_summary,
     save_transcript,
+    set_stage,
     update_status,
 )
 from backend.app.models.meeting import Meeting, MeetingStatus
 from backend.app.services.summarization_service import SummarizationError, summarize
-from backend.app.services.transcription_service import TranscriptionError, transcribe
+from backend.app.services.transcription_service import TranscriptionError, transcribe_file
 
 log = get_logger(__name__)
 
@@ -39,8 +43,17 @@ _FOLLOW_POLL_SECONDS = 1.0
 _FOLLOW_MAX_WAIT_SECONDS = 300
 
 
+def _release_audio(meeting: Meeting) -> None:
+    """Delete the uploaded audio once it's no longer needed: less storage,
+    and recordings of private meetings don't linger on disk."""
+    if config.RETAIN_AUDIO or audio_in_use(meeting.file_hash, meeting.id):
+        return
+    Path(meeting.audio_path).unlink(missing_ok=True)
+
+
 def _copy_result(meeting_id: str, source: Meeting) -> None:
     save_transcript(meeting_id, source.transcript)
+    save_segments(meeting_id, source.segments, source.audio_seconds)
     save_summary(
         meeting_id,
         source.summary,
@@ -68,6 +81,14 @@ def run(meeting_id: str) -> None:
     if meeting is None:
         log.error("processing requested for unknown meeting id=%s", meeting_id)
         return
+    try:
+        _run(meeting)
+    finally:
+        _release_audio(meeting)
+
+
+def _run(meeting: Meeting) -> None:
+    meeting_id = meeting.id
 
     update_status(meeting_id, MeetingStatus.PROCESSING)
     log.info("processing started id=%s", meeting_id)
@@ -101,14 +122,19 @@ def run(meeting_id: str) -> None:
         )
 
     try:
-        transcript = transcribe(meeting.audio_path)
+        transcription = transcribe_file(
+            meeting.audio_path, on_stage=lambda stage: set_stage(meeting_id, stage)
+        )
+        transcript = transcription["text"]
         save_transcript(meeting_id, transcript)
+        save_segments(meeting_id, transcription["segments"], transcription["duration"])
 
         if len(transcript.strip()) < _MIN_TRANSCRIPT_CHARS:
             raise TranscriptionError(
                 "Transcript is too short to summarize — the audio may not contain any speech."
             )
 
+        set_stage(meeting_id, "summarizing")
         result = summarize(transcript)
         save_summary(
             meeting_id,

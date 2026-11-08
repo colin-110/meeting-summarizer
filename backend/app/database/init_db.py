@@ -27,12 +27,31 @@ CREATE TABLE IF NOT EXISTS meetings (
 CREATE INDEX IF NOT EXISTS idx_meetings_file_hash ON meetings(file_hash);
 """
 
+# Full-text index over the searchable text. Kept in sync by meetings_repo.
+FTS_SCHEMA = """
+CREATE VIRTUAL TABLE IF NOT EXISTS meetings_fts USING fts5(
+    meeting_id UNINDEXED, owner_id UNINDEXED, title, summary, transcript,
+    tokenize = 'porter unicode61'
+);
+"""
+
+# Indexes on columns that only exist after the migration below.
+POST_MIGRATION_INDEXES = """
+CREATE INDEX IF NOT EXISTS idx_meetings_owner_created ON meetings(owner_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_meetings_status_created ON meetings(status, created_at);
+"""
+
 # Added after the table already existed in deployed/local databases —
 # CREATE TABLE IF NOT EXISTS won't retrofit new columns onto an existing
 # table, so missing ones are migrated in by hand here.
 _NEW_COLUMNS = {
     "title": "TEXT",
     "open_questions": "TEXT",
+    "owner_id": "TEXT NOT NULL DEFAULT ''",
+    "stage": "TEXT",
+    "segments": "TEXT",
+    "attempts": "INTEGER NOT NULL DEFAULT 0",
+    "audio_seconds": "REAL",
 }
 
 
@@ -44,6 +63,8 @@ def init_db(db_path: Optional[Path] = None) -> None:
         for column, column_type in _NEW_COLUMNS.items():
             if column not in existing_columns:
                 conn.execute(f"ALTER TABLE meetings ADD COLUMN {column} {column_type}")
+        conn.executescript(POST_MIGRATION_INDEXES)
+        conn.executescript(FTS_SCHEMA)
         conn.commit()
     finally:
         conn.close()

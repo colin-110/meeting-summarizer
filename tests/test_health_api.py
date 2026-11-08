@@ -47,11 +47,10 @@ def test_startup_recovers_meetings_stuck_in_processing(tmp_path, monkeypatch):
     from backend.app.main import app
 
     with TestClient(app):
-        pass  # lifespan startup should sweep the stuck meeting to FAILED
+        pass  # lifespan startup should put the interrupted job back on the queue
 
     recovered = get_meeting(stuck.id)
-    assert recovered.status == MeetingStatus.FAILED
-    assert "restart" in recovered.error_message
+    assert recovered.status == MeetingStatus.QUEUED
 
 
 def test_cors_headers_present_when_allowed_origins_configured(tmp_path, monkeypatch):

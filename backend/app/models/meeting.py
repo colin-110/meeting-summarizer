@@ -31,3 +31,8 @@ class Meeting:
     updated_at: str = ""
     processing_started_at: Optional[str] = None
     processing_completed_at: Optional[str] = None
+    owner_id: str = ""
+    stage: Optional[str] = None
+    segments: list = field(default_factory=list)
+    attempts: int = 0
+    audio_seconds: Optional[float] = None

@@ -1,4 +1,9 @@
 import io
+import hashlib
+
+TOKEN = "t" * 32
+HEADERS = {"X-Owner-Token": TOKEN}
+OWNER = hashlib.sha256(TOKEN.encode()).hexdigest()
 
 from fastapi.testclient import TestClient
 
@@ -23,7 +28,7 @@ def _seed_completed_meeting(tmp_path, monkeypatch):
     init_db(db_path)
     monkeypatch.setattr(config, "DATABASE_PATH", db_path)
 
-    meeting = create_meeting("standup.mp3", "hash1", "audio/standup.mp3")
+    meeting = create_meeting("standup.mp3", "hash1", "audio/standup.mp3", owner_id=OWNER)
     save_transcript(meeting.id, "hello team")
     save_summary(meeting.id, "Quick sync.", ["Ship Friday"], [{"task": "Write notes", "assignee": "Sam", "deadline": None}])
     update_status(meeting.id, MeetingStatus.COMPLETED)
@@ -31,7 +36,7 @@ def _seed_completed_meeting(tmp_path, monkeypatch):
 
 
 def test_get_unknown_meeting_returns_404(tmp_path, monkeypatch):
-    with TestClient(_app(tmp_path, monkeypatch)) as client:
+    with TestClient(_app(tmp_path, monkeypatch), headers=HEADERS) as client:
         response = client.get("/api/v1/meetings/does-not-exist")
 
     assert response.status_code == 404
@@ -39,7 +44,7 @@ def test_get_unknown_meeting_returns_404(tmp_path, monkeypatch):
 
 
 def test_get_unknown_meeting_status_returns_404(tmp_path, monkeypatch):
-    with TestClient(_app(tmp_path, monkeypatch)) as client:
+    with TestClient(_app(tmp_path, monkeypatch), headers=HEADERS) as client:
         response = client.get("/api/v1/meetings/does-not-exist/status")
 
     assert response.status_code == 404
@@ -49,7 +54,7 @@ def test_get_meeting_detail_returns_full_result(tmp_path, monkeypatch):
     app = _app(tmp_path, monkeypatch)
     meeting_id = _seed_completed_meeting(tmp_path, monkeypatch)
 
-    with TestClient(app) as client:
+    with TestClient(app, headers=HEADERS) as client:
         response = client.get(f"/api/v1/meetings/{meeting_id}")
 
     assert response.status_code == 200
@@ -69,7 +74,7 @@ def test_get_meeting_detail_includes_title_and_open_questions(tmp_path, monkeypa
     init_db(db_path)
     monkeypatch.setattr(config, "DATABASE_PATH", db_path)
 
-    meeting = create_meeting("standup.mp3", "hash2", "audio/standup.mp3")
+    meeting = create_meeting("standup.mp3", "hash2", "audio/standup.mp3", owner_id=OWNER)
     save_transcript(meeting.id, "hello team")
     save_summary(
         meeting.id,
@@ -82,7 +87,7 @@ def test_get_meeting_detail_includes_title_and_open_questions(tmp_path, monkeypa
     update_status(meeting.id, MeetingStatus.COMPLETED)
 
     app = _app(tmp_path, monkeypatch)
-    with TestClient(app) as client:
+    with TestClient(app, headers=HEADERS) as client:
         response = client.get(f"/api/v1/meetings/{meeting.id}")
         list_response = client.get("/api/v1/meetings")
 
@@ -99,19 +104,19 @@ def test_get_meeting_status_returns_lightweight_result(tmp_path, monkeypatch):
     app = _app(tmp_path, monkeypatch)
     meeting_id = _seed_completed_meeting(tmp_path, monkeypatch)
 
-    with TestClient(app) as client:
+    with TestClient(app, headers=HEADERS) as client:
         response = client.get(f"/api/v1/meetings/{meeting_id}/status")
 
     assert response.status_code == 200
     body = response.json()
-    assert body == {"id": meeting_id, "status": MeetingStatus.COMPLETED, "error_message": None}
+    assert body == {"id": meeting_id, "status": MeetingStatus.COMPLETED, "stage": None, "error_message": None}
 
 
 def test_list_meetings_returns_all(tmp_path, monkeypatch):
     app = _app(tmp_path, monkeypatch)
     _seed_completed_meeting(tmp_path, monkeypatch)
 
-    with TestClient(app) as client:
+    with TestClient(app, headers=HEADERS) as client:
         response = client.get("/api/v1/meetings")
 
     assert response.status_code == 200

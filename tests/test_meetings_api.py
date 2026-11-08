@@ -1,4 +1,9 @@
 import io
+import hashlib
+
+TOKEN = "t" * 32
+HEADERS = {"X-Owner-Token": TOKEN}
+OWNER = hashlib.sha256(TOKEN.encode()).hexdigest()
 
 from fastapi.testclient import TestClient
 
@@ -23,7 +28,7 @@ def test_upload_valid_audio_creates_meeting(tmp_path, monkeypatch):
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
     content = b"ID3" + b"\x00" * 100
 
-    with TestClient(_app(tmp_path, monkeypatch)) as client:
+    with TestClient(_app(tmp_path, monkeypatch), headers=HEADERS) as client:
         response = client.post(
             "/api/v1/meetings",
             files={"audio": ("standup.mp3", io.BytesIO(content), "audio/mpeg")},
@@ -36,7 +41,7 @@ def test_upload_valid_audio_creates_meeting(tmp_path, monkeypatch):
 
 
 def test_upload_rejects_unsupported_type(tmp_path, monkeypatch):
-    with TestClient(_app(tmp_path, monkeypatch)) as client:
+    with TestClient(_app(tmp_path, monkeypatch), headers=HEADERS) as client:
         response = client.post(
             "/api/v1/meetings",
             files={"audio": ("notes.exe", io.BytesIO(b"whatever"), "application/octet-stream")},
@@ -47,7 +52,7 @@ def test_upload_rejects_unsupported_type(tmp_path, monkeypatch):
 
 
 def test_upload_rejects_missing_file(tmp_path, monkeypatch):
-    with TestClient(_app(tmp_path, monkeypatch)) as client:
+    with TestClient(_app(tmp_path, monkeypatch), headers=HEADERS) as client:
         response = client.post("/api/v1/meetings")
 
     assert response.status_code == 422
@@ -61,7 +66,7 @@ def test_upload_is_rate_limited_per_client(tmp_path, monkeypatch):
     monkeypatch.setattr(meetings_api, "_UPLOAD_RATE_WINDOW_SECONDS", 60)
     headers = {"x-forwarded-for": "203.0.113.5"}
 
-    with TestClient(_app(tmp_path, monkeypatch)) as client:
+    with TestClient(_app(tmp_path, monkeypatch), headers=HEADERS) as client:
         for _ in range(2):
             response = client.post(
                 "/api/v1/meetings",

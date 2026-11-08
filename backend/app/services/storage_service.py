@@ -16,13 +16,17 @@ from fastapi import UploadFile
 
 from backend.app.core import config
 
-ALLOWED_EXTENSIONS = {".mp3", ".wav", ".m4a"}
+ALLOWED_EXTENSIONS = {".mp3", ".wav", ".m4a", ".mp4", ".webm", ".ogg", ".flac"}
 
 # Enough to catch a mislabeled/renamed file — not a full magic-byte library.
 _SIGNATURES: dict[str, list[tuple[int, bytes]]] = {
     ".mp3": [(0, b"ID3"), (0, b"\xff\xfb"), (0, b"\xff\xf3"), (0, b"\xff\xf2")],
     ".wav": [(0, b"RIFF")],
     ".m4a": [(4, b"ftyp")],
+    ".mp4": [(4, b"ftyp")],
+    ".webm": [(0, b"\x1a\x45\xdf\xa3")],
+    ".ogg": [(0, b"OggS")],
+    ".flac": [(0, b"fLaC")],
 }
 
 _SAFE_CHARS = re.compile(r"[^A-Za-z0-9._-]+")
