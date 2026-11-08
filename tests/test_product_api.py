@@ -99,7 +99,7 @@ def test_ask_answers_from_transcript(app, monkeypatch):
     with TestClient(app) as client:
         r = client.post(f"/api/v1/meetings/{mid}/ask", json={"question": "Who is being hired?"}, headers=_h(_token("a")))
         short = client.post(f"/api/v1/meetings/{mid}/ask", json={"question": "hi"}, headers=_h(_token("a")))
-    assert r.status_code == 200 and r.json() == {"answer": "Two engineers [00:03].", "sources": []}
+    assert r.status_code == 200 and r.json() == {"answer": "Two engineers [00:03].", "sources": [], "cached": False}
     assert seen["context"] == "[00:03] We agreed to hire two engineers."
     assert short.status_code == 422
 
@@ -306,7 +306,8 @@ def test_end_to_end_upload_to_completed_with_real_ffmpeg(app, tmp_path, monkeypa
         body = client.get(f"/api/v1/meetings/{mid}").json()
         assert body["title"] == "Tone Test"
         assert [s["start"] for s in body["segments"]] == [0.0, 5.0, 10.0]
-        assert body["audio_seconds"] == 15.0
+        assert body["audio_seconds"] == 12.0  # the real recording length, not the last segment's end
+        assert body["usage"]["audio_seconds"] == 12.0
         assert client.get("/api/v1/meetings?q=tone", headers=_h(_token("e"))).json()[0]["id"] == mid
 
     assert not list((tmp_path / "audio").glob("[!.]*"))  # audio deleted after processing

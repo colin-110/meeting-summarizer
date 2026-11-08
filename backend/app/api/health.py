@@ -44,4 +44,14 @@ def metrics() -> str:
     for model in sorted({config.SUMMARY_MODEL, config.SECTION_MODEL, config.QA_MODEL}):
         lines.append(f'provider_tokens_last_minute{{model="{model}"}} {budget_used(f"tokens:{model}"):.0f}')
     lines.append(f"provider_tokens_per_minute_limit {config.LLM_TOKENS_PER_MINUTE}")
+    lines += [
+        "# TYPE audio_seconds_total counter",
+        f"audio_seconds_total {stats['audio_seconds_total']:.0f}",
+        "# TYPE audio_seconds_skipped_total counter",
+        f"audio_seconds_skipped_total {stats['audio_seconds_total'] - stats['audio_seconds_sent_total']:.0f}",
+        "# TYPE llm_tokens_total counter",
+        f"llm_tokens_total {stats['llm_tokens_total']:.0f}",
+        "# TYPE answer_cache_hits_total counter",
+        f"answer_cache_hits_total {stats['answer_cache_hits_total']}",
+    ]
     return "\n".join(lines) + "\n"

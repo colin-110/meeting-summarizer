@@ -1,10 +1,23 @@
 import hashlib
 import re
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, Request, Response, UploadFile
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Form,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    UploadFile,
+)
 from fastapi.responses import PlainTextResponse
 
 from backend.app.core.logging import get_logger
@@ -14,8 +27,10 @@ from backend.app.database.meetings_repo import (
     create_meeting,
     delete_meeting,
     get_meeting,
+    get_version,
     list_meetings,
     list_recording_chunks,
+    owner_backlog,
     queue_depth,
     update_status,
 )
@@ -80,6 +95,34 @@ def _check_capacity() -> None:
         )
 
 
+def _check_owner_backlog(owner: str) -> None:
+    """Fairness: one user can't fill the shared queue on their own."""
+    if owner_backlog(owner) >= config.MAX_QUEUED_PER_OWNER:
+        raise HTTPException(
+            status_code=429,
+            detail=f"You already have {config.MAX_QUEUED_PER_OWNER} meetings processing. "
+                   "Wait for one to finish, then upload the next.",
+            headers={"Retry-After": "60"},
+        )
+
+
+def _conditional(meeting_id: str, owner: str, request: Request, response: Response) -> Optional[Response]:
+    """ETag support for the endpoints the UI polls. The version check reads
+    four small columns, so an unchanged meeting is answered with 304 without
+    loading or sending its transcript. Browsers revalidate automatically
+    (Cache-Control: no-cache), so the frontend needs no code for this."""
+    version = get_version(meeting_id)
+    if version is None or version["owner_id"] != owner:
+        raise HTTPException(status_code=404, detail=f"No meeting found with id '{meeting_id}'.")
+    raw = f"{version['updated_at']}|{version['status']}|{version['stage']}"
+    etag = 'W/"' + hashlib.sha256(raw.encode()).hexdigest()[:20] + '"'
+    headers = {"ETag": etag, "Cache-Control": "private, no-cache", "Vary": "X-Owner-Token"}
+    if etag in request.headers.get("if-none-match", ""):
+        return Response(status_code=304, headers=headers)
+    response.headers.update(headers)
+    return None
+
+
 def _limit(key: str, max_requests: int, window_seconds: int, message: str) -> None:
     try:
         check_rate_limit(key, max_requests=max_requests, window_seconds=window_seconds)
@@ -89,11 +132,11 @@ def _limit(key: str, max_requests: int, window_seconds: int, message: str) -> No
 
 
 def _client_ip(request: Request) -> str:
-    # Trusts X-Forwarded-For because this app is only ever deployed behind
-    # a platform-managed proxy (e.g. Render) that sets it itself — it would
-    # be spoofable and unsafe to trust if the app were reachable directly.
+    # X-Forwarded-For is only honoured behind a proxy that sets it
+    # (TRUST_PROXY_HEADERS); reachable directly, anyone could spoof it to
+    # dodge the per-IP limits.
     forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
+    if forwarded and config.TRUST_PROXY_HEADERS:
         return forwarded.split(",")[0].strip()
     return request.client.host if request.client else "unknown"
 
@@ -110,6 +153,7 @@ def upload_meeting(request: Request, audio: UploadFile = File(...), owner: str =
         log.warning("upload rate-limited: %s", exc)
         raise HTTPException(status_code=429, detail=str(exc)) from exc
     _check_capacity()
+    _check_owner_backlog(owner)
 
     try:
         filename, file_hash, audio_path = save_upload(audio)
@@ -136,13 +180,13 @@ def get_meetings(
 
 
 @router.get("/{meeting_id}/status", response_model=MeetingStatusOut)
-def get_meeting_status(meeting_id: str, owner: str = Depends(owner_id)):
-    return _get_or_404(meeting_id, owner)
+def get_meeting_status(meeting_id: str, request: Request, response: Response, owner: str = Depends(owner_id)):
+    return _conditional(meeting_id, owner, request, response) or _get_or_404(meeting_id, owner)
 
 
 @router.get("/{meeting_id}", response_model=MeetingDetailOut)
-def get_meeting_detail(meeting_id: str, owner: str = Depends(owner_id)):
-    return _get_or_404(meeting_id, owner)
+def get_meeting_detail(meeting_id: str, request: Request, response: Response, owner: str = Depends(owner_id)):
+    return _conditional(meeting_id, owner, request, response) or _get_or_404(meeting_id, owner)
 
 
 @router.post("/{meeting_id}/ask", response_model=AskOut)
@@ -151,10 +195,8 @@ def ask_meeting(meeting_id: str, body: AskIn, owner: str = Depends(owner_id)) ->
     if meeting.status != MeetingStatus.COMPLETED:
         raise HTTPException(status_code=409, detail="This meeting hasn't finished processing yet.")
     _limit(f"ask:{owner}", _ASK_RATE_LIMIT, _ASK_RATE_WINDOW_SECONDS, "Too many questions — try again shortly.")
-    try:
+    with _qa_errors():
         return qa_service.ask(meeting, body.question)
-    except qa_service.QAError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.get("/{meeting_id}/export", response_class=PlainTextResponse)
@@ -180,15 +222,24 @@ def remove_meeting(meeting_id: str, owner: str = Depends(owner_id)) -> Response:
     return Response(status_code=204)
 
 
+@contextmanager
+def _qa_errors():
+    try:
+        yield
+    except qa_service.QABusyError as exc:
+        raise HTTPException(status_code=503, detail=str(exc),
+                            headers={"Retry-After": str(max(1, int(exc.retry_after)))}) from exc
+    except qa_service.QAError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
 # ---- ask across all meetings ----
 
 @ask_router.post("/ask", response_model=AskOut)
 def ask_all_meetings(body: AskIn, owner: str = Depends(owner_id)) -> dict:
     _limit(f"ask:{owner}", _ASK_RATE_LIMIT, _ASK_RATE_WINDOW_SECONDS, "Too many questions — try again shortly.")
-    try:
+    with _qa_errors():
         return qa_service.ask_all(owner, body.question)
-    except qa_service.QAError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 # ---- live recording: pieces are transcribed while the meeting is still going ----
@@ -215,6 +266,7 @@ def start_recording(request: Request, owner: str = Depends(owner_id)) -> dict:
 @recordings_router.post("/{meeting_id}/chunks", response_model=ChunkOut)
 def upload_recording_chunk(
     meeting_id: str,
+    background: BackgroundTasks,
     seq: int = Form(..., ge=0, le=10_000),
     offset: float = Form(..., ge=0),
     audio: UploadFile = File(...),
@@ -237,10 +289,20 @@ def upload_recording_chunk(
     chunk = {"seq": seq, "offset_seconds": offset, "audio_path": audio_path, "file_hash": file_hash}
     try:
         processing_service.transcribe_recording_chunk(meeting_id, chunk)
-        return {"seq": seq, "transcribed": True}
     except (TranscriptionError, ProviderBusyError) as exc:
         log.warning("live chunk deferred to worker id=%s seq=%d: %s", meeting_id, seq, exc)
         return {"seq": seq, "transcribed": False}
+    if config.LIVE_PRESUMMARIZE:
+        # After the response is sent: summarize any sections that are now final.
+        background.add_task(_presummarize, meeting_id)
+    return {"seq": seq, "transcribed": True}
+
+
+def _presummarize(meeting_id: str) -> None:
+    try:
+        processing_service.presummarize_recording(meeting_id)
+    except Exception:
+        log.exception("pre-summary failed id=%s", meeting_id)
 
 
 @recordings_router.post("/{meeting_id}/finish")

@@ -1,9 +1,6 @@
-// Relative path everywhere this frontend shares an origin with the API —
-// local dev, and the copy Render's own StaticFiles serves alongside its
-// backend. Only the copy actually split out onto Vercel is truly
-// cross-origin, so that's the only case that needs the backend's full URL.
-const RENDER_API_ORIGIN = "https://meeting-summarizer-xr53.onrender.com";
-const API_ORIGIN = window.location.hostname.endsWith(".vercel.app") ? RENDER_API_ORIGIN : "";
+// The API serves this frontend, so every call is same-origin. If you host
+// the frontend separately, set this to the API's URL (and ALLOWED_ORIGINS on the server).
+const API_ORIGIN = "";
 const API_BASE = `${API_ORIGIN}/api/v1/meetings`;
 const POLL_INTERVAL_MS = 2000;
 const PAGE_SIZE = 20;
@@ -263,6 +260,31 @@ function renderStats(meeting) {
   document.getElementById("result-stats").innerHTML = counts
     .map((c) => `<span class="stat-pill"><strong>${c.count}</strong> ${c.label}${c.count === 1 ? "" : "s"}</span>`)
     .join("");
+  renderUsage(meeting.usage || {});
+}
+
+// What this meeting cost in AI resources, and what the pipeline saved.
+function renderUsage(usage) {
+  const el = document.getElementById("result-usage");
+  const parts = [];
+  const audio = usage.audio_seconds || 0;
+  const skipped = audio - (usage.audio_sent_seconds ?? audio);
+  if (skipped >= 1) {
+    parts.push(`Skipped ${fmtDuration(skipped)} of silence (${Math.round((skipped / audio) * 100)}% less audio to transcribe)`);
+  }
+  if (usage.reused_result) parts.push("Same audio as an earlier upload — reused its notes, no AI used");
+  else if (usage.llm_tokens) parts.push(`${usage.llm_tokens.toLocaleString()} AI tokens`);
+  if (usage.presummarized_sections) {
+    const n = usage.presummarized_sections;
+    parts.push(`${n} section${n === 1 ? "" : "s"} summarized during the recording`);
+  }
+  el.textContent = parts.join(" · ");
+  el.hidden = parts.length === 0;
+}
+
+function fmtDuration(seconds) {
+  const s = Math.round(seconds);
+  return s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${s % 60} s`;
 }
 
 function fmtTime(seconds) {
@@ -338,6 +360,12 @@ function renderAnswer(box, body, { openOtherMeetings }) {
     chips.appendChild(chip);
   }
   if (chips.children.length) box.appendChild(chips);
+  if (body.cached) {
+    const note = document.createElement("div");
+    note.className = "answer-note";
+    note.textContent = "Asked before — answered instantly from cache, no AI tokens used.";
+    box.appendChild(note);
+  }
 }
 
 function renderResult(meeting) {

@@ -16,6 +16,7 @@ from typing import Optional
 from backend.app.core import config
 from backend.app.database.connection import get_connection
 from backend.app.models.meeting import Meeting, MeetingStatus
+from backend.app.utils.usage import merge_usage
 
 
 def _now() -> str:
@@ -48,6 +49,7 @@ def _row_to_meeting(row: sqlite3.Row) -> Meeting:
         chapters=json.loads(row["chapters"]) if row["chapters"] else [],
         notes_cache=json.loads(row["notes_cache"]) if row["notes_cache"] else {},
         source=row["source"],
+        usage=json.loads(row["usage"]) if row["usage"] else {},
     )
 
 
@@ -282,12 +284,17 @@ def claim_next(db_path: Optional[Path] = None) -> Optional[str]:
                 config.MAX_JOB_ATTEMPTS,
             ),
         )
+        # Priority: finished live recordings first (someone just pressed Stop
+        # and is watching), then the owner with the fewest jobs running (one
+        # user's batch can't take every worker), then oldest first.
         row = conn.execute(
-            "SELECT id FROM meetings WHERE "
-            "(status = ? AND (not_before IS NULL OR not_before <= ?)) "
-            "OR (status = ? AND lease_until < ?) "
-            "ORDER BY created_at ASC, id ASC LIMIT 1",
-            (MeetingStatus.QUEUED, now, MeetingStatus.PROCESSING, now),
+            "SELECT id FROM meetings m WHERE "
+            "((status = ? AND (not_before IS NULL OR not_before <= ?)) OR (status = ? AND lease_until < ?)) "
+            "ORDER BY (source = 'recording') DESC, "
+            "(SELECT COUNT(*) FROM meetings p WHERE p.owner_id = m.owner_id AND p.status = ? "
+            " AND p.lease_until >= ?) ASC, "
+            "created_at ASC, id ASC LIMIT 1",
+            (MeetingStatus.QUEUED, now, MeetingStatus.PROCESSING, now, MeetingStatus.PROCESSING, now),
         ).fetchone()
         if row is None:
             conn.commit()  # keep any abandonments made above
@@ -356,6 +363,12 @@ def queue_stats(db_path: Optional[Path] = None) -> dict:
             "WHERE status = ? AND processing_completed_at > ?",
             (MeetingStatus.COMPLETED, cutoff),
         ).fetchall()
+        audio, sent, tokens = conn.execute(
+            "SELECT COALESCE(SUM(json_extract(usage, '$.audio_seconds')), 0), "
+            "COALESCE(SUM(json_extract(usage, '$.audio_sent_seconds')), 0), "
+            "COALESCE(SUM(json_extract(usage, '$.llm_tokens')), 0) FROM meetings WHERE usage IS NOT NULL"
+        ).fetchone()
+        cache_hits = conn.execute("SELECT COALESCE(SUM(hits), 0) FROM answer_cache").fetchone()[0]
     finally:
         conn.close()
     secs = [
@@ -369,6 +382,10 @@ def queue_stats(db_path: Optional[Path] = None) -> dict:
         ),
         "completed_last_hour": len(secs),
         "avg_processing_seconds_last_hour": sum(secs) / len(secs) if secs else 0.0,
+        "audio_seconds_total": audio,
+        "audio_seconds_sent_total": sent,
+        "llm_tokens_total": tokens,
+        "answer_cache_hits_total": cache_hits,
     }
 
 
@@ -421,6 +438,11 @@ def delete_meeting(meeting_id: str, db_path: Optional[Path] = None) -> Optional[
         conn.execute("DELETE FROM meetings_fts WHERE meeting_id = ?", (meeting_id,))
         conn.execute("DELETE FROM segments_fts WHERE meeting_id = ?", (meeting_id,))
         conn.execute("DELETE FROM recording_chunks WHERE meeting_id = ?", (meeting_id,))
+        # Cached answers quote the meeting; drop them (and cross-meeting ones of this owner).
+        conn.execute(
+            "DELETE FROM answer_cache WHERE meeting_id = ? OR (meeting_id IS NULL AND owner_id = ?)",
+            (meeting_id, meeting.owner_id),
+        )
         conn.execute("DELETE FROM meetings WHERE id = ?", (meeting_id,))
         conn.commit()
     finally:
@@ -443,6 +465,8 @@ def purge_older_than(days: int, db_path: Optional[Path] = None) -> list[Meeting]
                 (cutoff, MeetingStatus.COMPLETED, MeetingStatus.FAILED, abandoned, MeetingStatus.RECORDING),
             )
         ]
+        conn.execute("DELETE FROM answer_cache WHERE created_at < ?", (time.time() - days * 86400,))
+        conn.commit()
     finally:
         conn.close()
     return [m for m in (delete_meeting(i, db_path) for i in ids) if m is not None]
@@ -461,10 +485,81 @@ def save_chapters(meeting_id: str, chapters: list, db_path: Optional[Path] = Non
 
 
 def save_notes_cache(meeting_id: str, cache: dict, db_path: Optional[Path] = None) -> None:
-    """Checkpoint finished section summaries, so a retry only redoes what's missing."""
+    """Checkpoint finished section summaries, so a retry only redoes what's missing.
+    Merged into what's stored, so concurrent writers (a live pre-summary and
+    the worker) never erase each other's sections."""
+    _merge_json(meeting_id, "notes_cache", cache, lambda old, new: {**old, **new}, db_path, touch=False)
+
+
+def add_usage(meeting_id: str, delta: dict, db_path: Optional[Path] = None) -> None:
+    """Add provider usage (tokens, audio seconds) to a meeting's running totals."""
+    _merge_json(meeting_id, "usage", delta, merge_usage, db_path, touch=True)
+
+
+def _merge_json(meeting_id, column, value, combine, db_path, *, touch: bool) -> None:
     conn = get_connection(db_path)
     try:
-        conn.execute("UPDATE meetings SET notes_cache = ? WHERE id = ?", (json.dumps(cache), meeting_id))
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(f"SELECT {column} FROM meetings WHERE id = ?", (meeting_id,)).fetchone()
+        if row is None:
+            conn.rollback()
+            return
+        merged = combine(json.loads(row[0]) if row[0] else {}, value)
+        sql = f"UPDATE meetings SET {column} = ?" + (", updated_at = ?" if touch else "") + " WHERE id = ?"
+        conn.execute(sql, (json.dumps(merged), _now(), meeting_id) if touch else (json.dumps(merged), meeting_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_version(meeting_id: str, db_path: Optional[Path] = None) -> Optional[dict]:
+    """Just enough to answer a conditional GET without loading the transcript."""
+    conn = get_connection(db_path)
+    try:
+        row = conn.execute(
+            "SELECT owner_id, status, stage, updated_at FROM meetings WHERE id = ?", (meeting_id,)
+        ).fetchone()
+    finally:
+        conn.close()
+    return dict(row) if row else None
+
+
+def owner_backlog(owner_id: str, db_path: Optional[Path] = None) -> int:
+    """Meetings this owner has waiting or in progress."""
+    conn = get_connection(db_path)
+    try:
+        return conn.execute(
+            "SELECT COUNT(*) FROM meetings WHERE owner_id = ? AND status IN (?, ?, ?)",
+            (owner_id, MeetingStatus.UPLOADED, MeetingStatus.QUEUED, MeetingStatus.PROCESSING),
+        ).fetchone()[0]
+    finally:
+        conn.close()
+
+
+# ---- answer cache ----
+
+def cached_answer(key: str, db_path: Optional[Path] = None) -> Optional[dict]:
+    conn = get_connection(db_path)
+    try:
+        row = conn.execute("SELECT answer, sources FROM answer_cache WHERE key = ?", (key,)).fetchone()
+        if row is None:
+            return None
+        conn.execute("UPDATE answer_cache SET hits = hits + 1 WHERE key = ?", (key,))
+        conn.commit()
+        return {"answer": row["answer"], "sources": json.loads(row["sources"])}
+    finally:
+        conn.close()
+
+
+def store_answer(key: str, owner_id: str, meeting_id: Optional[str], answer: str, sources: list,
+                 db_path: Optional[Path] = None) -> None:
+    conn = get_connection(db_path)
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO answer_cache (key, owner_id, meeting_id, answer, sources, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (key, owner_id, meeting_id, answer, json.dumps(sources), time.time()),
+        )
         conn.commit()
     finally:
         conn.close()

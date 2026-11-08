@@ -1,4 +1,4 @@
-"""Schema creation for the single `meetings` table."""
+"""Schema creation and in-place migrations."""
 
 from pathlib import Path
 from typing import Optional
@@ -59,6 +59,23 @@ CREATE TABLE IF NOT EXISTS recording_chunks (
     segments TEXT,
     PRIMARY KEY (meeting_id, seq)
 );
+CREATE TABLE IF NOT EXISTS locks (
+    name TEXT PRIMARY KEY,
+    holder TEXT NOT NULL,
+    until REAL NOT NULL
+);
+-- Answers keyed by (question, exact context sent): asking the same thing
+-- about unchanged meetings costs no tokens.
+CREATE TABLE IF NOT EXISTS answer_cache (
+    key TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL,
+    meeting_id TEXT,
+    answer TEXT NOT NULL,
+    sources TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    hits INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_answer_cache_owner ON answer_cache(owner_id);
 """
 
 # Indexes on columns that only exist after the migration below.
@@ -86,6 +103,7 @@ _NEW_COLUMNS = {
     "chapters": "TEXT",
     "notes_cache": "TEXT",
     "source": "TEXT NOT NULL DEFAULT 'upload'",
+    "usage": "TEXT",
 }
 
 

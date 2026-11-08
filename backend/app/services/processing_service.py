@@ -12,6 +12,7 @@ from pathlib import Path
 from backend.app.core import config
 from backend.app.core.logging import get_logger
 from backend.app.database.meetings_repo import (
+    add_usage,
     audio_in_use,
     chunk_audio_in_use,
     defer,
@@ -28,9 +29,18 @@ from backend.app.database.meetings_repo import (
     update_status,
 )
 from backend.app.models.meeting import Meeting, MeetingStatus
-from backend.app.services.summarization_service import SummarizationError, summarize, summarize_long
+from backend.app.services.summarization_service import (
+    SummarizationError,
+    section_key,
+    split_sections,
+    summarize,
+    summarize_long,
+    summarize_section,
+)
 from backend.app.services.transcription_service import TranscriptionError, transcribe_file
+from backend.app.utils import locks
 from backend.app.utils.errors import ProviderBusyError
+from backend.app.utils.usage import metering
 
 log = get_logger(__name__)
 
@@ -83,6 +93,7 @@ def _copy_result(meeting_id: str, source: Meeting) -> None:
         title=source.title,
         open_questions=source.open_questions,
     )
+    add_usage(meeting_id, {"reused_result": True})
 
 
 def transcribe_recording_chunk(meeting_id: str, chunk: dict) -> list:
@@ -96,6 +107,8 @@ def transcribe_recording_chunk(meeting_id: str, chunk: dict) -> list:
         for s in result["segments"]
     ]
     save_chunk_segments(meeting_id, chunk["seq"], segments)
+    add_usage(meeting_id, {"audio_seconds": result["duration"],
+                           "audio_sent_seconds": result.get("sent_seconds", result["duration"])})
     if not config.RETAIN_AUDIO and not chunk_audio_in_use(chunk["file_hash"]):
         Path(chunk["audio_path"]).unlink(missing_ok=True)
     return segments
@@ -115,6 +128,54 @@ def _assemble_recording(meeting: Meeting) -> None:
     text = " ".join(s["text"] for s in segments).strip()
     save_transcript(meeting.id, text)
     save_segments(meeting.id, segments, max((s["end"] for s in segments), default=0.0))
+
+
+# How long a background pre-summary may hold its lock (it renews by finishing).
+_PRESUMMARY_LOCK_SECONDS = 300
+# A pre-summary never waits long for AI capacity: the final job can still do it.
+_PRESUMMARY_MAX_WAIT_SECONDS = 15
+
+
+def presummarize_recording(meeting_id: str) -> int:
+    """While a live recording is still going, summarize every section of it
+    that is already final. Returns how many sections were summarized.
+
+    Sections are cut greedily in order (split_sections), so once the text
+    after a section has started, that section can't change any more. Its
+    notes are cached under the same key summarize_long will look up, so when
+    the meeting ends only the last section and the merge are left — and the
+    token spend is spread across the meeting instead of arriving in one burst.
+    """
+    with locks.held(f"presummary:{meeting_id}", _PRESUMMARY_LOCK_SECONDS) as got:
+        if not got:
+            return 0
+        segments: list = []
+        for expected, chunk in enumerate(list_recording_chunks(meeting_id)):
+            if chunk["seq"] != expected or chunk["status"] != "done":
+                break  # only the contiguous, fully transcribed start of the recording
+            segments.extend(chunk["segments"])
+        segments.sort(key=lambda s: s["start"])
+        if sum(len(s["text"]) + 1 for s in segments) <= config.SINGLE_PASS_CHARS:
+            return 0  # a short meeting gets one single-pass summary at the end
+        meeting = get_meeting(meeting_id)
+        if meeting is None or meeting.status != MeetingStatus.RECORDING:
+            return 0
+        done = 0
+        with metering() as meter:
+            for i, section in enumerate(split_sections(segments, config.SECTION_CHARS)[:-1]):
+                key = section_key(i, section["text"])
+                if key in meeting.notes_cache:
+                    continue
+                try:
+                    note = summarize_section(i, section["text"], max_wait=_PRESUMMARY_MAX_WAIT_SECONDS)
+                except (ProviderBusyError, SummarizationError) as exc:
+                    log.info("pre-summary paused id=%s: %s", meeting_id, exc)
+                    break
+                save_notes_cache(meeting_id, {key: note})
+                done += 1
+        if meter["llm_calls"]:
+            add_usage(meeting_id, {**meter, "presummarized_sections": done})
+        return done
 
 
 def run(meeting_id: str) -> None:
@@ -172,6 +233,8 @@ def _run(meeting: Meeting) -> None:
                 )
                 save_transcript(meeting_id, transcription["text"])
                 save_segments(meeting_id, transcription["segments"], transcription["duration"])
+                add_usage(meeting_id, {"audio_seconds": transcription["duration"],
+                                       "audio_sent_seconds": transcription.get("sent_seconds", transcription["duration"])})
             meeting = get_meeting(meeting_id)
 
         transcript = meeting.transcript or ""
@@ -181,16 +244,21 @@ def _run(meeting: Meeting) -> None:
             )
 
         set_stage(meeting_id, "summarizing")
-        if len(transcript) <= config.SINGLE_PASS_CHARS:
-            result = summarize(transcript)
-        else:
-            result = summarize_long(
-                transcript,
-                meeting.segments,
-                cache=meeting.notes_cache,
-                on_progress=lambda cache: save_notes_cache(meeting_id, cache),
-                on_stage=lambda stage: set_stage(meeting_id, stage),
-            )
+        with metering() as meter:
+            try:
+                if len(transcript) <= config.SINGLE_PASS_CHARS:
+                    result = summarize(transcript)
+                else:
+                    result = summarize_long(
+                        transcript,
+                        meeting.segments,
+                        cache=meeting.notes_cache,
+                        on_progress=lambda notes: save_notes_cache(meeting_id, notes),
+                        on_stage=lambda stage: set_stage(meeting_id, stage),
+                    )
+            finally:
+                if meter["llm_calls"]:
+                    add_usage(meeting_id, meter)
         save_chapters(meeting_id, result.get("chapters", []))
         save_summary(
             meeting_id,

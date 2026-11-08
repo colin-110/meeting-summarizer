@@ -48,6 +48,7 @@ class MeetingDetailOut(MeetingSummaryOut):
     chapters: list[Chapter] = []
     audio_seconds: Optional[float] = None
     source: str = "upload"
+    usage: dict = {}
     error_message: Optional[str] = None
     processing_started_at: Optional[str] = None
     processing_completed_at: Optional[str] = None
@@ -76,6 +77,7 @@ class Source(BaseModel):
 class AskOut(BaseModel):
     answer: str
     sources: list[Source] = []
+    cached: bool = False
 
 
 class ChunkOut(BaseModel):

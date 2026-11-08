@@ -71,17 +71,36 @@ SECTION_MODEL = os.environ.get("SECTION_MODEL", "openai/gpt-oss-20b")
 QA_MODEL = os.environ.get("QA_MODEL", "openai/gpt-oss-20b")
 # Characters of retrieved transcript sent with a question.
 QA_CONTEXT_CHARS = int(os.environ.get("QA_CONTEXT_CHARS", "12000"))
+# Summaries normally use SUMMARY_MODEL. Each model has its own per-minute
+# budget, so when that one is saturated for longer than FALLBACK_AFTER_SECONDS
+# the call moves to FALLBACK_MODEL instead of waiting (empty disables).
+FALLBACK_MODEL = os.environ.get("FALLBACK_MODEL", "openai/gpt-oss-20b")
+FALLBACK_AFTER_SECONDS = float(os.environ.get("FALLBACK_AFTER_SECONDS", "8"))
+
+# Pauses longer than SKIP_SILENCE_SECONDS are shortened to KEEP_SILENCE_SECONDS
+# before audio is sent for transcription (0 disables). Timestamps are mapped
+# back to the original recording.
+SKIP_SILENCE_SECONDS = float(os.environ.get("SKIP_SILENCE_SECONDS", "2.0"))
+KEEP_SILENCE_SECONDS = float(os.environ.get("KEEP_SILENCE_SECONDS", "0.6"))
+
+# Fairness: how many meetings one user may have waiting at once.
+MAX_QUEUED_PER_OWNER = int(os.environ.get("MAX_QUEUED_PER_OWNER", "5"))
+# Summarize finished sections of a live recording while it is still going,
+# so stopping a long meeting leaves only the final merge.
+LIVE_PRESUMMARIZE = os.environ.get("LIVE_PRESUMMARIZE", "true").lower() == "true"
+
 # Keep the uploaded audio after processing? Off by default: less storage, better privacy.
 RETAIN_AUDIO = os.environ.get("RETAIN_AUDIO", "false").lower() == "true"
 # Meetings older than this are deleted automatically. 0 disables.
 RETENTION_DAYS = int(os.environ.get("RETENTION_DAYS", "30"))
 
-# Comma-separated list of origins allowed to call the API cross-origin, e.g.
-# when the frontend is deployed separately (Vercel) from this backend
-# (Render). Empty by default: the frontend is served from this same process
-# via StaticFiles unless ALLOWED_ORIGINS says otherwise, so cross-origin
-# requests have no reason to be allowed until they do.
+# Comma-separated origins allowed to call the API cross-origin. Empty by
+# default: the frontend is served by this same process, so it's same-origin.
 ALLOWED_ORIGINS = [origin.strip() for origin in os.environ.get("ALLOWED_ORIGINS", "").split(",") if origin.strip()]
+
+# Trust X-Forwarded-For for the client IP (used by rate limits). Only turn on
+# behind a reverse proxy that sets it; otherwise clients could spoof it.
+TRUST_PROXY_HEADERS = os.environ.get("TRUST_PROXY_HEADERS", "false").lower() == "true"
 
 DATABASE_PATH = DATA_DIR / "app.db"
 AUDIO_DIR = DATA_DIR / "audio"

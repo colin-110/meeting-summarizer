@@ -18,7 +18,6 @@ from backend.app.database.meetings_repo import (
     claim_next,
     create_meeting,
     get_meeting,
-    save_notes_cache,
     save_segments,
     save_transcript,
     update_status,
@@ -315,7 +314,8 @@ def test_standalone_worker_process_drains_queue_and_stops_on_sigterm(tmp_path):
 
 def test_budget_reserves_expected_output_not_the_cap(monkeypatch):
     reserved = []
-    monkeypatch.setattr(summarization_service, "acquire_budget", lambda key, amount, **k: reserved.append(amount) or 1)
+    monkeypatch.setattr(summarization_service, "acquire_first_available",
+                        lambda keys, amount, **k: reserved.append(amount) or (0, 1))
     monkeypatch.setattr(summarization_service, "settle_budget", lambda *a, **k: None)
 
     class _C:

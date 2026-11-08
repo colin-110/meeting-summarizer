@@ -90,6 +90,29 @@ def acquire_budget(
         time.sleep(min(max(wait, 0.2), 5.0))
 
 
+def acquire_first_available(
+    keys: list[str],
+    amount: float,
+    *,
+    limit: float,
+    first_wait_seconds: float,
+    max_wait_seconds: float,
+) -> tuple[int, int]:
+    """Reserve on the first key with room soon enough: each key but the last
+    gets first_wait_seconds, the last gets max_wait_seconds. Used to spill
+    over to a second model (its own budget at the provider) instead of
+    waiting for the first. Returns (index of the key used, reservation id)."""
+    for i, key in enumerate(keys):
+        last = i == len(keys) - 1
+        try:
+            wait = max_wait_seconds if last else min(first_wait_seconds, max_wait_seconds)
+            return i, acquire_budget(key, amount, limit=limit, max_wait_seconds=wait)
+        except ProviderBusyError:
+            if last:
+                raise
+    raise ValueError("no budget keys given")
+
+
 def settle_budget(reservation_id: int, actual: float, db_path: Optional[Path] = None) -> None:
     """Replace a reservation's estimate with what the call really used."""
     conn = get_connection(db_path)

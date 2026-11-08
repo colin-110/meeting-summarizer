@@ -781,3 +781,10 @@ ul {
 }
 .source-chip:hover { border-color: var(--accent); color: var(--accent); }
 .seg.is-flash { background: var(--warning-bg); border-radius: 4px; }
+
+.usage-note,
+.answer-note {
+  margin: 8px 0 0;
+  font-size: 0.82rem;
+  color: var(--muted);
+}

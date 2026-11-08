@@ -1,4 +1,3 @@
-import shutil
 import subprocess
 
 import pytest
@@ -46,7 +45,7 @@ def test_split_and_compress_chunks_and_shrinks(tone, tmp_path, monkeypatch):
     monkeypatch.setattr(config, "CHUNK_SECONDS", 10)
     work = tmp_path / "work"
     work.mkdir()
-    chunks = audio_service.split_and_compress(str(tone), work)
+    chunks = audio_service.split_and_compress(str(tone), work).chunks
 
     assert [c.offset_seconds for c in chunks] == [0, 10, 20]
     assert all(c.path.suffix == ".mp3" for c in chunks)
@@ -126,8 +125,99 @@ def test_split_cuts_at_a_real_pause_not_mid_speech(tmp_path, monkeypatch):
     )
     work = tmp_path / "work"
     work.mkdir()
-    chunks = audio_service.split_and_compress(str(path), work)
+    chunks = audio_service.split_and_compress(str(path), work).chunks
 
     assert len(chunks) >= 2
     assert abs(chunks[1].offset_seconds - 12.5) < 0.4  # inside the 12.0-13.0 gap
     assert not (work / "full.mp3").exists()
+
+
+# ---- silence skipping ----
+
+def _gappy(tmp_path, gaps=(6, 6)):
+    """5s tone, then for each gap: that many seconds of silence and another 5s tone."""
+    path = tmp_path / "gappy.wav"
+    inputs, labels = ["-f", "lavfi", "-i", "sine=frequency=440:duration=5"], ["[0]"]
+    for i, gap in enumerate(gaps):
+        inputs += ["-f", "lavfi", "-i", f"anullsrc=r=44100:cl=mono:d={gap}",
+                   "-f", "lavfi", "-i", "sine=frequency=440:duration=5"]
+        labels += [f"[{2 * i + 1}]", f"[{2 * i + 2}]"]
+    subprocess.run(
+        [audio_service.ffmpeg_exe(), "-v", "error", *inputs, "-filter_complex",
+         f"{''.join(labels)}concat=n={len(labels)}:v=0:a=1", "-ac", "1", str(path)],
+        check=True,
+    )
+    return path
+
+
+def test_plan_silence_cuts_shortens_only_long_pauses():
+    from backend.app.services.audio_service import plan_silence_cuts
+
+    silences = [(5.0, 11.0), (12.0, 13.0), (20.0, 26.0)]
+    cuts = plan_silence_cuts(30, silences, min_gap=2.0, keep=0.6)
+    assert cuts == [(5.3, 10.7), (20.3, 25.7)]           # the 1s pause is left alone
+    assert plan_silence_cuts(30, [(5.0, 7.5)], min_gap=2.0, keep=0.6) == []  # saving too small
+    assert plan_silence_cuts(30, silences, min_gap=0, keep=0.6) == []        # disabled
+
+
+def test_timeline_maps_sent_time_back_to_the_recording():
+    from backend.app.services.audio_service import timeline_for
+
+    tl = timeline_for(30.0, [(5.3, 10.7), (20.3, 25.7)])
+    assert tl.sent_seconds == pytest.approx(19.2)
+    assert tl.to_original(0.0) == 0.0
+    assert tl.to_original(5.3) == 10.7                   # a start on the join is after the cut
+    assert tl.to_original(5.3, is_end=True) == 5.3       # an end on the join is before it
+    assert tl.to_original(6.0) == 11.4
+    assert tl.to_original(19.2, is_end=True) == 30.0
+    assert tl.to_sent(8.0) == pytest.approx(5.3)          # inside a removed pause -> the join
+
+
+def test_long_pauses_are_not_sent_and_timestamps_still_match(tmp_path, monkeypatch):
+    """27s recording with two 6s pauses: ~10.8s of silence isn't sent, and the
+    provider's timestamps (relative to what it got) land back on the real tones."""
+    monkeypatch.setattr(config, "CHUNK_SECONDS", 600)
+    path = _gappy(tmp_path)
+    work = tmp_path / "work"
+    work.mkdir()
+    prepared = audio_service.split_and_compress(str(path), work)
+    assert prepared.timeline.original_seconds == pytest.approx(27.0, abs=0.1)
+    assert prepared.timeline.sent_seconds == pytest.approx(16.2, abs=0.3)
+    sent = subprocess.run([audio_service.ffmpeg_exe(), "-i", str(prepared.chunks[0].path), "-f", "null", "-"],
+                          capture_output=True, text=True).stderr
+    assert audio_service._output_seconds(sent) == pytest.approx(prepared.timeline.sent_seconds, abs=0.1)
+
+    tones_in_sent_audio = [(0.0, 5.0), (5.6, 10.6), (11.2, 16.2)]
+
+    class _T:
+        @staticmethod
+        def create(**kwargs):
+            return type("R", (), {"text": "", "segments": [
+                {"start": a, "end": b, "text": f"tone {i}", "no_speech_prob": 0.0, "avg_logprob": -0.1}
+                for i, (a, b) in enumerate(tones_in_sent_audio)]})()
+
+    client = type("C", (), {"audio": type("A", (), {"transcriptions": _T()})()})()
+    result = transcribe_file(str(path), client=client)
+    starts = [s["start"] for s in result["segments"]]
+    ends = [s["end"] for s in result["segments"]]
+    assert starts == pytest.approx([0.0, 11.0, 22.0], abs=0.25)
+    assert ends == pytest.approx([5.0, 16.0, 27.0], abs=0.25)
+    assert result["duration"] == pytest.approx(27.0, abs=0.1)
+    assert result["sent_seconds"] == pytest.approx(16.2, abs=0.3)
+
+
+def test_silence_removal_is_dropped_if_the_output_length_is_off(tmp_path):
+    """A wrong timeline would shift every timestamp, so a mismatch keeps the original."""
+    path = _gappy(tmp_path)
+    out = tmp_path / "trimmed.mp3"
+    assert audio_service._remove_silence(path, out, [(5.3, 10.7)], expected=3.0) is False
+    assert not out.exists()
+
+
+def test_skip_silence_can_be_disabled(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "SKIP_SILENCE_SECONDS", 0)
+    work = tmp_path / "work"
+    work.mkdir()
+    prepared = audio_service.split_and_compress(str(_gappy(tmp_path)), work)
+    assert prepared.removed == []
+    assert prepared.timeline.sent_seconds == pytest.approx(27.0, abs=0.1)

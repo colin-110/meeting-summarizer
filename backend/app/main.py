@@ -65,8 +65,8 @@ async def request_log(request: Request, call_next):
 
 
 if config.ALLOWED_ORIGINS:
-    # Only needed when the frontend is deployed separately from this API
-    # (e.g. Vercel + Render) — same-origin requests never hit CORS at all.
+    # Only needed when the frontend is hosted separately from this API —
+    # same-origin requests never hit CORS at all.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=config.ALLOWED_ORIGINS,

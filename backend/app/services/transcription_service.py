@@ -103,10 +103,11 @@ def transcribe_file(
     client: Optional[Groq] = None,
     on_stage: Optional[Callable[[str], None]] = None,
 ) -> dict:
-    """Full pipeline for one recording: compress + split with ffmpeg, then
+    """Full pipeline for one recording: compress, shorten long pauses, split,
     transcribe the chunks in parallel and stitch them back together.
 
-    Returns {"text", "segments" (absolute timestamps), "duration"}.
+    Returns {"text", "segments" (timestamps in the original recording),
+    "duration" (original seconds), "sent_seconds" (audio actually sent)}.
     """
     stage = on_stage or (lambda _: None)
     if not Path(audio_path).exists():
@@ -116,14 +117,26 @@ def transcribe_file(
     try:
         stage("compressing")
         try:
-            chunks = audio_service.split_and_compress(audio_path, work_dir)
+            prepared = audio_service.split_and_compress(audio_path, work_dir)
         except AudioProcessingError as exc:
             raise TranscriptionError(str(exc)) from exc
-        segments, duration = transcribe_chunks(chunks, client=client, on_stage=stage)
+        segments, _ = transcribe_chunks(prepared.chunks, client=client, on_stage=stage)
     finally:
         audio_service.cleanup(work_dir)
+    timeline = prepared.timeline
+    segments = [
+        {"start": timeline.to_original(s["start"]), "end": timeline.to_original(s["end"], is_end=True),
+         "text": s["text"]}
+        for s in segments
+    ]
     text = " ".join(s["text"] for s in segments)
-    return {"text": text.strip(), "segments": segments, "duration": duration}
+    duration = timeline.original_seconds or max((s["end"] for s in segments), default=0.0)
+    return {
+        "text": text.strip(),
+        "segments": segments,
+        "duration": round(duration, 2),
+        "sent_seconds": round(timeline.sent_seconds, 2),
+    }
 
 
 def transcribe_chunks(chunks, *, client=None, on_stage=None) -> tuple[list, float]:

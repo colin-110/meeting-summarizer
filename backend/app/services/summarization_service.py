@@ -17,7 +17,8 @@ from groq import APIConnectionError, Groq, InternalServerError, RateLimitError
 from backend.app.core import config
 from backend.app.core.logging import get_logger
 from backend.app.utils.errors import ProviderBusyError, clean_provider_message, retry_after_seconds
-from backend.app.utils.rate_limit import acquire_budget, settle_budget
+from backend.app.utils.rate_limit import acquire_first_available, settle_budget
+from backend.app.utils.usage import record_tokens
 from backend.app.utils.retry import call_with_retry
 
 log = get_logger(__name__)
@@ -165,6 +166,23 @@ def _estimate_tokens(*texts: str) -> int:
     return int(sum(len(t) for t in texts) / 3.2) + 50
 
 
+def _reserve(models: list[str], estimate: int, max_wait: float) -> tuple[str, int]:
+    """Reserve budget on the first model that has room soon enough. Each model
+    has its own per-minute budget at the provider, so when the preferred one
+    is saturated the second one doubles the capacity instead of making the
+    job wait. Returns (model, reservation id)."""
+    i, reservation = acquire_first_available(
+        [f"tokens:{m}" for m in models],
+        estimate,
+        limit=config.LLM_TOKENS_PER_MINUTE,
+        first_wait_seconds=config.FALLBACK_AFTER_SECONDS,
+        max_wait_seconds=max_wait,
+    )
+    if i:
+        log.info("budget for %s is full; using %s", models[0], models[i])
+    return models[i], reservation
+
+
 def _structured_call(
     client,
     *,
@@ -174,6 +192,8 @@ def _structured_call(
     max_tokens: int,
     reasoning_effort: Optional[str] = None,
     expected_output: int = 900,
+    allow_fallback: bool = True,
+    max_wait: Optional[float] = None,
 ) -> dict:
     """One strict-JSON-schema call, held to the shared per-model token budget
     and settled with the real usage afterwards. If the model runs out of
@@ -184,19 +204,18 @@ def _structured_call(
     concurrent jobs wait for room they never needed. Overshoot is absorbed by
     the headroom between LLM_TOKENS_PER_MINUTE and the provider's real limit."""
     effort = reasoning_effort
+    wait = config.PROVIDER_MAX_WAIT_SECONDS if max_wait is None else max_wait
+    models = [model]
+    if allow_fallback and config.FALLBACK_MODEL and config.FALLBACK_MODEL != model:
+        models.append(config.FALLBACK_MODEL)
     for attempt in (1, 2):
         estimate = _estimate_tokens(system, user) + expected_output
-        reservation = acquire_budget(
-            f"tokens:{model}",
-            estimate,
-            limit=config.LLM_TOKENS_PER_MINUTE,
-            max_wait_seconds=config.PROVIDER_MAX_WAIT_SECONDS,
-        )
+        chosen, reservation = _reserve(models, estimate, wait)
         used = estimate
 
         def _call():
             kwargs = dict(
-                model=model,
+                model=chosen,
                 temperature=0.2,
                 reasoning_format="hidden",
                 max_completion_tokens=max_tokens,
@@ -227,10 +246,11 @@ def _structured_call(
             raise SummarizationError(f"Summarization failed: {clean_provider_message(exc)}") from exc
         finally:
             settle_budget(reservation, used)
+            record_tokens(chosen, used)
 
         choice = response.choices[0]
         if getattr(choice, "finish_reason", "stop") == "length" and attempt == 1:
-            log.warning("model hit the output limit on %s; retrying with low reasoning effort", model)
+            log.warning("model hit the output limit on %s; retrying with low reasoning effort", chosen)
             effort = "low"
             continue
         try:
@@ -311,8 +331,23 @@ def _text_sections(transcript: str, max_chars: int) -> list[dict]:
     return sections
 
 
-def _section_key(index: int, text: str) -> str:
+def section_key(index: int, text: str) -> str:
     return f"{index}:{hashlib.sha256(text.encode()).hexdigest()[:16]}"
+
+
+def summarize_section(index: int, text: str, *, client=None, max_wait: Optional[float] = None) -> dict:
+    """Notes for one section of a long meeting. The prompt doesn't depend on
+    how many sections there are, so a section summarized while a live
+    recording is still going is reused as-is when the meeting ends."""
+    return _structured_call(
+        client or Groq(),
+        model=config.SECTION_MODEL,
+        system=_SYSTEM_PROMPT + _SECTION_NOTE,
+        user=f"Section {index + 1} of the meeting transcript:\n\n{text}",
+        max_tokens=2500,
+        reasoning_effort="low",
+        max_wait=max_wait,
+    )
 
 
 def _merge(client, notes: list[dict]) -> dict:
@@ -358,18 +393,11 @@ def summarize_long(
     for i, section in enumerate(sections):
         if on_stage:
             on_stage(f"summarizing section {i + 1} of {len(sections)}")
-        key = _section_key(i, section["text"])
+        key = section_key(i, section["text"])
         if key not in cache:
-            cache[key] = _structured_call(
-                client,
-                model=config.SECTION_MODEL,
-                system=_SYSTEM_PROMPT + _SECTION_NOTE,
-                user=f"Section {i + 1} of {len(sections)} of the meeting transcript:\n\n{section['text']}",
-                max_tokens=2500,
-                reasoning_effort="low",
-            )
+            cache[key] = summarize_section(i, section["text"], client=client)
             if on_progress:
-                on_progress(cache)
+                on_progress({key: cache[key]})
         notes.append(cache[key])
 
     if on_stage:

@@ -40,3 +40,4 @@ class Meeting:
     chapters: list = field(default_factory=list)
     notes_cache: dict = field(default_factory=dict)
     source: str = "upload"
+    usage: dict = field(default_factory=dict)

@@ -8,16 +8,17 @@ inside the provider's per-minute token budget no matter how long the meeting
 is, and lets one question span all of a user's meetings.
 """
 
+import hashlib
 import re
 from typing import Optional
 
 from groq import APIConnectionError, Groq, InternalServerError, RateLimitError
 
 from backend.app.core import config
-from backend.app.database.meetings_repo import get_meeting, search_segments
+from backend.app.database.meetings_repo import cached_answer, get_meeting, search_segments, store_answer
 from backend.app.models.meeting import Meeting
-from backend.app.utils.errors import ProviderBusyError, clean_provider_message
-from backend.app.utils.rate_limit import acquire_budget, settle_budget
+from backend.app.utils.errors import ProviderBusyError, clean_provider_message, retry_after_seconds
+from backend.app.utils.rate_limit import acquire_first_available, settle_budget
 from backend.app.utils.retry import call_with_retry
 
 _RETRYABLE: tuple[type[BaseException], ...] = (APIConnectionError, InternalServerError)
@@ -39,6 +40,14 @@ _SYSTEM_PROMPT = """You answer questions about meetings using only the excerpts 
 
 class QAError(RuntimeError):
     """Raised when answering fails. Message is safe to show the user."""
+
+
+class QABusyError(QAError):
+    """The AI is at capacity right now; the client should retry after retry_after seconds."""
+
+    def __init__(self, message: str, retry_after: float = 30.0):
+        super().__init__(message)
+        self.retry_after = retry_after
 
 
 def fmt_time(seconds: float) -> str:
@@ -130,15 +139,23 @@ def answer(context: str, question: str, *, client: Optional[Groq] = None) -> str
     max_tokens = 1200
     # Reserve a realistic answer size, not the cap; settled to real usage below.
     estimate = int((len(_SYSTEM_PROMPT) + len(context) + len(question)) / 3.2) + 400
-    reservation = acquire_budget(
-        f"tokens:{config.QA_MODEL}", estimate,
-        limit=config.LLM_TOKENS_PER_MINUTE, max_wait_seconds=20,
-    )
+    # Questions are interactive: wait briefly, then try the other model's budget.
+    models = [config.QA_MODEL]
+    if config.FALLBACK_MODEL and config.SUMMARY_MODEL != config.QA_MODEL:
+        models.append(config.SUMMARY_MODEL)
+    try:
+        i, reservation = acquire_first_available(
+            [f"tokens:{m}" for m in models], estimate, limit=config.LLM_TOKENS_PER_MINUTE,
+            first_wait_seconds=min(config.FALLBACK_AFTER_SECONDS, 5), max_wait_seconds=15,
+        )
+    except ProviderBusyError as exc:
+        raise QABusyError("The AI is busy right now — try again in a minute.", exc.retry_after) from exc
+    model = models[i]
     used = estimate
 
     def _call():
         return client.chat.completions.create(
-            model=config.QA_MODEL,
+            model=model,
             temperature=0.1,
             reasoning_format="hidden",
             reasoning_effort="low",
@@ -153,7 +170,7 @@ def answer(context: str, question: str, *, client: Optional[Groq] = None) -> str
         response = call_with_retry(_call, retry_on=_RETRYABLE)
         used = getattr(getattr(response, "usage", None), "total_tokens", None) or estimate
     except RateLimitError as exc:
-        raise QAError("The AI is busy right now — try again in a minute.") from exc
+        raise QABusyError("The AI is busy right now — try again in a minute.", retry_after_seconds(exc)) from exc
     except Exception as exc:
         raise QAError(f"Could not answer right now: {clean_provider_message(exc)}") from exc
     finally:
@@ -164,20 +181,39 @@ def answer(context: str, question: str, *, client: Optional[Groq] = None) -> str
     return text
 
 
+def _cache_key(owner_id: str, question: str, context: str) -> str:
+    """Same question (ignoring case and punctuation) over the exact same
+    excerpts -> same answer. Any change to the meetings changes the context,
+    so a stale answer can never be served."""
+    normalized = " ".join(re.findall(r"\w+", question.lower()))
+    return hashlib.sha256("\0".join((config.QA_MODEL, owner_id, normalized, context)).encode()).hexdigest()
+
+
+def _answer_cached(owner_id: str, meeting_id: Optional[str], question: str, context: str, sources: list,
+                   client: Optional[Groq]) -> dict:
+    key = _cache_key(owner_id, question, context)
+    hit = cached_answer(key)
+    if hit is not None:
+        return {**hit, "cached": True}
+    text = answer(context, question, client=client)
+    store_answer(key, owner_id, meeting_id, text, sources)
+    return {"answer": text, "sources": sources, "cached": False}
+
+
 def ask(meeting: Meeting, question: str, *, client: Optional[Groq] = None) -> dict:
-    """Answer about one meeting. Returns {"answer", "sources"}."""
+    """Answer about one meeting. Returns {"answer", "sources", "cached"}."""
     if not (meeting.segments or meeting.transcript):
         raise QAError("This meeting has no transcript to answer from.")
     context, sources = build_context(meeting.owner_id, question, meeting_id=meeting.id)
-    return {"answer": answer(context, question, client=client), "sources": sources}
+    return _answer_cached(meeting.owner_id, meeting.id, question, context, sources, client)
 
 
 def ask_all(owner_id: str, question: str, *, client: Optional[Groq] = None) -> dict:
-    """Answer across all of one owner's meetings. Returns {"answer", "sources"}."""
+    """Answer across all of one owner's meetings. Returns {"answer", "sources", "cached"}."""
     context, sources = build_context(owner_id, question)
     if not sources:
         raise QAError("No meetings matched that question. Try different words.")
-    return {"answer": answer(context, question, client=client), "sources": sources}
+    return _answer_cached(owner_id, None, question, context, sources, client)
 
 
 def to_markdown(meeting: Meeting) -> str:

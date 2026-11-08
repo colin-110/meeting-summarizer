@@ -6,6 +6,8 @@ import os
 import pytest
 
 os.environ["WORKER_CONCURRENCY"] = "0"
+# Tests simulate different clients through X-Forwarded-For.
+os.environ["TRUST_PROXY_HEADERS"] = "true"
 os.environ.pop("GROQ_API_KEY", None)
 
 

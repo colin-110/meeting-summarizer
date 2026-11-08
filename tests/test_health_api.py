@@ -41,14 +41,14 @@ def test_cors_headers_present_when_allowed_origins_configured(tmp_path, monkeypa
     import importlib
 
     monkeypatch.setattr(config, "DATABASE_PATH", tmp_path / "test.db")
-    monkeypatch.setattr(config, "ALLOWED_ORIGINS", ["https://example-frontend.vercel.app"])
+    monkeypatch.setattr(config, "ALLOWED_ORIGINS", ["https://frontend.example.com"])
 
     main_module = importlib.import_module("backend.app.main")
     importlib.reload(main_module)
     try:
         with TestClient(main_module.app) as client:
-            response = client.get("/health", headers={"Origin": "https://example-frontend.vercel.app"})
-        assert response.headers.get("access-control-allow-origin") == "https://example-frontend.vercel.app"
+            response = client.get("/health", headers={"Origin": "https://frontend.example.com"})
+        assert response.headers.get("access-control-allow-origin") == "https://frontend.example.com"
     finally:
         monkeypatch.setattr(config, "ALLOWED_ORIGINS", [])
         importlib.reload(main_module)
@@ -60,6 +60,6 @@ def test_no_cors_headers_when_allowed_origins_unset(tmp_path, monkeypatch):
     from backend.app.main import app
 
     with TestClient(app) as client:
-        response = client.get("/health", headers={"Origin": "https://example-frontend.vercel.app"})
+        response = client.get("/health", headers={"Origin": "https://frontend.example.com"})
 
     assert "access-control-allow-origin" not in response.headers
