@@ -43,10 +43,12 @@ _FOLLOW_POLL_SECONDS = 1.0
 _FOLLOW_MAX_WAIT_SECONDS = 300
 
 
-def _release_audio(meeting: Meeting) -> None:
+def release_audio(meeting: Meeting, *, force: bool = False) -> None:
     """Delete the uploaded audio once it's no longer needed: less storage,
-    and recordings of private meetings don't linger on disk."""
-    if config.RETAIN_AUDIO or audio_in_use(meeting.file_hash, meeting.id):
+    and recordings of private meetings don't linger on disk. Kept while
+    another upload of the same audio still needs it; `force` overrides
+    RETAIN_AUDIO (used when the user deletes a meeting)."""
+    if (config.RETAIN_AUDIO and not force) or audio_in_use(meeting.file_hash, meeting.id):
         return
     Path(meeting.audio_path).unlink(missing_ok=True)
 
@@ -84,7 +86,7 @@ def run(meeting_id: str) -> None:
     try:
         _run(meeting)
     finally:
-        _release_audio(meeting)
+        release_audio(meeting)
 
 
 def _run(meeting: Meeting) -> None:

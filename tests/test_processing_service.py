@@ -257,13 +257,13 @@ def test_audio_deleted_after_processing_unless_retained_or_still_needed(tmp_path
     other = fresh("z.mp3")
     update_status(other.id, MeetingStatus.PROCESSING)
     update_status(first.id, MeetingStatus.COMPLETED)
-    processing_service._release_audio(get_meeting(other.id))
+    processing_service.release_audio(get_meeting(other.id))
     assert not audio.exists()
 
     # RETAIN_AUDIO keeps it.
     monkeypatch.setattr(config, "RETAIN_AUDIO", True)
     audio.write_bytes(b"audio")
-    processing_service._release_audio(get_meeting(other.id))
+    processing_service.release_audio(get_meeting(other.id))
     assert audio.exists()
 
 

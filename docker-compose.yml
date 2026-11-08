@@ -1,0 +1,30 @@
+# Production on a single small VM (e.g. an AWS free-tier EC2 instance).
+#   1. Put GROQ_API_KEY and DOMAIN in a .env file next to this one.
+#   2. docker compose up -d --build
+# Caddy gets and renews a free HTTPS certificate for $DOMAIN automatically.
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATA_DIR: /data
+    volumes:
+      - app-data:/data
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on: [app]
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+
+volumes:
+  app-data:
+  caddy-data:

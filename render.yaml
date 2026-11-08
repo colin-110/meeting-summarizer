@@ -1,3 +1,6 @@
+# NOTE: Render's free tier has an ephemeral disk — meetings are lost on every
+# deploy/restart/sleep. Fine for a demo; for real use deploy with
+# docker-compose.yml on a VM with a persistent disk (see README).
 services:
   - type: web
     name: meeting-summarizer
@@ -9,8 +12,6 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.7
-      - key: MAX_UPLOAD_MB
-        value: 25
       - key: DATA_DIR
         value: data
       - key: GROQ_API_KEY

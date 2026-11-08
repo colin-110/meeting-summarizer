@@ -1,0 +1,8 @@
+{$DOMAIN} {
+	encode gzip
+	# Uploads can be large; don't let the proxy cut them off early.
+	request_body {
+		max_size 210MB
+	}
+	reverse_proxy app:8000
+}

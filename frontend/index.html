@@ -53,16 +53,20 @@
     <section id="upload-section">
       <form id="upload-form">
         <label id="dropzone" for="audio-input" class="dropzone">
-          <input type="file" id="audio-input" class="visually-hidden" accept=".mp3,.wav,.m4a" required />
+          <input type="file" id="audio-input" class="visually-hidden" accept=".mp3,.wav,.m4a,.mp4,.webm,.ogg,.flac" required />
           <svg class="dropzone-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M12 15V4M12 4l-4 4M12 4l4 4" />
             <path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" />
           </svg>
           <span class="dropzone-text" id="dropzone-text">Drag &amp; drop your recording, or <span class="dropzone-link">browse</span></span>
-          <span class="dropzone-hint">MP3, WAV, or M4A</span>
+          <span class="dropzone-hint">MP3, WAV, M4A, MP4, WebM, OGG or FLAC</span>
         </label>
         <button type="submit" id="upload-btn">Upload &amp; Summarize</button>
       </form>
+      <div class="record-row">
+        <button type="button" id="record-btn" class="secondary-btn">● Record a meeting</button>
+        <span id="record-timer" class="muted" hidden>00:00</span>
+      </div>
       <p id="upload-error" class="error" hidden></p>
 
       <div class="how-it-works">
@@ -95,6 +99,11 @@
 
     <section id="result-section" hidden>
       <button id="new-upload-btn" type="button">Summarize another meeting</button>
+      <div class="result-actions">
+        <button id="export-btn" type="button" class="secondary-btn">Export Markdown</button>
+        <button id="copy-btn" type="button" class="secondary-btn">Copy summary</button>
+        <button id="delete-btn" type="button" class="secondary-btn danger-btn">Delete</button>
+      </div>
 
       <div class="result-header">
         <h2 id="result-title"></h2>
@@ -130,9 +139,16 @@
       </h3>
       <ul id="result-open-questions"></ul>
 
+      <h3>Ask this meeting</h3>
+      <form id="ask-form" class="ask-form">
+        <input id="ask-input" type="text" maxlength="500" placeholder="e.g. Who owns the launch checklist?" required />
+        <button type="submit" id="ask-btn">Ask</button>
+      </form>
+      <div id="ask-answer" class="ask-answer" hidden></div>
+
       <details class="transcript-details">
         <summary>Transcript</summary>
-        <p id="result-transcript"></p>
+        <div id="result-transcript"></div>
       </details>
     </section>
 
@@ -154,7 +170,9 @@
       <h3>Recent meetings</h3>
       <button id="history-close-btn" type="button" aria-label="Close">&times;</button>
     </div>
+    <input id="history-search" type="search" placeholder="Search all meetings…" maxlength="200" />
     <ul id="history-list"></ul>
+    <button id="history-more" type="button" class="secondary-btn" hidden>Load more</button>
   </aside>
 
   <script src="/app.js"></script>

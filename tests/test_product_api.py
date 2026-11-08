@@ -151,6 +151,16 @@ def test_delete_meeting(app):
         assert client.delete(f"/api/v1/meetings/{busy.id}").status_code == 409
 
 
+def test_deleting_a_queued_meeting_removes_its_audio_file(app, tmp_path):
+    audio = tmp_path / "queued.mp3"
+    audio.write_bytes(b"audio")
+    m = create_meeting("q.mp3", "hq", str(audio), owner_id=_owner(_token("a")))
+    update_status(m.id, MeetingStatus.QUEUED)
+    with TestClient(app, headers=_h(_token("a"))) as client:
+        assert client.delete(f"/api/v1/meetings/{m.id}").status_code == 204
+    assert not audio.exists()
+
+
 def test_qa_to_markdown_handles_empty_meeting():
     from backend.app.models.meeting import Meeting
 

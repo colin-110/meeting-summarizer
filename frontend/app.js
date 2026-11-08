@@ -6,6 +6,42 @@ const RENDER_API_ORIGIN = "https://meeting-summarizer-xr53.onrender.com";
 const API_ORIGIN = window.location.hostname.endsWith(".vercel.app") ? RENDER_API_ORIGIN : "";
 const API_BASE = `${API_ORIGIN}/api/v1/meetings`;
 const POLL_INTERVAL_MS = 2000;
+const PAGE_SIZE = 20;
+
+// Private-by-default without accounts: a random token made once per browser
+// identifies "my" meetings. The server only ever stores a hash of it.
+function ownerToken() {
+  let token = null;
+  try {
+    token = localStorage.getItem("owner-token");
+  } catch (err) {
+    // storage blocked — fall through to a per-page token
+  }
+  if (!token) {
+    const bytes = crypto.getRandomValues(new Uint8Array(24));
+    token = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+    try {
+      localStorage.setItem("owner-token", token);
+    } catch (err) {
+      // not persisted; meetings from this page load won't be visible after a reload
+    }
+  }
+  return token;
+}
+const OWNER_TOKEN = ownerToken();
+
+function api(url, options = {}) {
+  return fetch(url, { ...options, headers: { ...(options.headers || {}), "X-Owner-Token": OWNER_TOKEN } });
+}
+
+const STAGE_TEXT = {
+  starting: "Starting…",
+  compressing: "Preparing the audio…",
+  transcribing: "Transcribing the recording…",
+  summarizing: "Writing the summary…",
+};
+let currentMeetingId = null;
+let currentMeeting = null;
 
 const uploadForm = document.getElementById("upload-form");
 const audioInput = document.getElementById("audio-input");
@@ -146,7 +182,7 @@ uploadForm.addEventListener("submit", async (event) => {
     const formData = new FormData();
     formData.append("audio", file);
 
-    const response = await fetch(API_BASE, { method: "POST", body: formData });
+    const response = await api(API_BASE, { method: "POST", body: formData });
     const body = await response.json();
 
     if (!response.ok) {
@@ -172,12 +208,12 @@ function pollStatus(meetingId) {
 
   pollTimer = setInterval(async () => {
     try {
-      const response = await fetch(`${API_BASE}/${meetingId}/status`);
+      const response = await api(`${API_BASE}/${meetingId}/status`);
       if (!response.ok) throw new Error("status check failed");
       const body = await response.json();
 
       if (body.status === "PROCESSING") {
-        statusText.textContent = "Processing — transcribing and summarizing…";
+        statusText.textContent = STAGE_TEXT[body.stage] || "Processing…";
       } else if (body.status === "QUEUED") {
         statusText.textContent = "Queued…";
       } else if (body.status === "COMPLETED") {
@@ -197,7 +233,7 @@ function pollStatus(meetingId) {
 }
 
 async function loadResult(meetingId) {
-  const response = await fetch(`${API_BASE}/${meetingId}`);
+  const response = await api(`${API_BASE}/${meetingId}`);
   const meeting = await response.json();
   renderResult(meeting);
   showOnly(resultSection);
@@ -221,7 +257,35 @@ function renderStats(meeting) {
     .join("");
 }
 
+function fmtTime(seconds) {
+  const s = Math.floor(seconds);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const mm = String(m).padStart(2, "0");
+  const ss = String(s % 60).padStart(2, "0");
+  return h ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+
+function renderTranscript(meeting) {
+  const box = document.getElementById("result-transcript");
+  box.innerHTML = "";
+  if (!meeting.segments || meeting.segments.length === 0) {
+    box.textContent = meeting.transcript || "—";
+    return;
+  }
+  for (const seg of meeting.segments) {
+    const row = document.createElement("div");
+    row.className = "seg";
+    row.innerHTML = `<span class="seg-time">${fmtTime(seg.start)}</span><span>${escapeHtml(seg.text)}</span>`;
+    box.appendChild(row);
+  }
+}
+
 function renderResult(meeting) {
+  currentMeetingId = meeting.id;
+  currentMeeting = meeting;
+  document.getElementById("ask-answer").hidden = true;
+  document.getElementById("ask-input").value = "";
   document.getElementById("result-title").textContent = meeting.title || meeting.filename;
   document.getElementById("result-filename").textContent = meeting.filename;
   document.getElementById("result-summary").textContent = meeting.summary || "—";
@@ -271,21 +335,34 @@ function renderResult(meeting) {
     questionsList.appendChild(li);
   }
 
-  document.getElementById("result-transcript").textContent = meeting.transcript || "—";
+  renderTranscript(meeting);
 }
 
 document.getElementById("new-upload-btn").addEventListener("click", resetToUpload);
 document.getElementById("retry-btn").addEventListener("click", resetToUpload);
 
-async function loadHistory() {
-  try {
-    const response = await fetch(API_BASE);
-    const meetings = await response.json();
-    historyList.innerHTML = "";
+const historySearch = document.getElementById("history-search");
+const historyMore = document.getElementById("history-more");
+let historyOffset = 0;
+let searchTimer = null;
 
-    if (meetings.length === 0) {
-      historyList.innerHTML = '<li class="muted">No meetings yet.</li>';
-      return;
+function renderSnippet(snippet) {
+  // The server marks matches with [[ ]]; escape everything else first.
+  return escapeHtml(snippet).replace(/\[\[/g, "<mark>").replace(/\]\]/g, "</mark>");
+}
+
+async function loadHistory(append = false) {
+  try {
+    if (!append) historyOffset = 0;
+    const q = historySearch.value.trim();
+    const params = new URLSearchParams({ limit: PAGE_SIZE, offset: historyOffset });
+    if (q) params.set("q", q);
+    const response = await api(`${API_BASE}?${params}`);
+    const meetings = await response.json();
+    if (!append) historyList.innerHTML = "";
+
+    if (meetings.length === 0 && !append) {
+      historyList.innerHTML = `<li class="muted">${q ? "No matches." : "No meetings yet."}</li>`;
     }
 
     for (const meeting of meetings) {
@@ -295,21 +372,30 @@ async function loadHistory() {
         `<span class="history-main">` +
         `<span class="history-title">${escapeHtml(meeting.title || meeting.filename)}</span>` +
         `<span class="history-time">${timeAgo(meeting.created_at)}</span>` +
+        (meeting.snippet ? `<span class="history-snippet">${renderSnippet(meeting.snippet)}</span>` : "") +
         `</span>` +
         `<span class="badge badge-${meeting.status.toLowerCase()}">${meeting.status}</span>`;
       li.addEventListener("click", () => openMeeting(meeting));
       historyList.appendChild(li);
     }
+    historyOffset += meetings.length;
+    historyMore.hidden = meetings.length < PAGE_SIZE;
   } catch (err) {
     // History is a nice-to-have; fail silently if the server is briefly unreachable.
   }
 }
 
+historySearch.addEventListener("input", () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => loadHistory(false), 250);
+});
+historyMore.addEventListener("click", () => loadHistory(true));
+
 async function openMeeting(meeting) {
   if (meeting.status === "COMPLETED") {
     await loadResult(meeting.id);
   } else if (meeting.status === "FAILED") {
-    const response = await fetch(`${API_BASE}/${meeting.id}`);
+    const response = await api(`${API_BASE}/${meeting.id}`);
     const detail = await response.json();
     failureMessage.textContent = detail.error_message || "Processing failed.";
     showOnly(errorSection);
@@ -318,5 +404,124 @@ async function openMeeting(meeting) {
     pollStatus(meeting.id);
   }
 }
+
+// ---- result actions ----
+document.getElementById("export-btn").addEventListener("click", async () => {
+  const response = await api(`${API_BASE}/${currentMeetingId}/export`);
+  if (!response.ok) return;
+  const blob = await response.blob();
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = `${(currentMeeting.title || "meeting").replace(/[^\w-]+/g, "-")}.md`;
+  link.click();
+  URL.revokeObjectURL(link.href);
+});
+
+document.getElementById("copy-btn").addEventListener("click", async (event) => {
+  const m = currentMeeting;
+  const text = [
+    m.title || m.filename,
+    "",
+    m.summary || "",
+    "",
+    "Decisions:",
+    ...m.key_decisions.map((d) => `- ${d}`),
+    "",
+    "Action items:",
+    ...m.action_items.map((a) => `- ${a.task} (${a.assignee || "unassigned"}, ${a.deadline || "no deadline"})`),
+  ].join("\n");
+  try {
+    await navigator.clipboard.writeText(text);
+    event.target.textContent = "Copied ✓";
+    setTimeout(() => (event.target.textContent = "Copy summary"), 1500);
+  } catch (err) {
+    event.target.textContent = "Copy failed";
+  }
+});
+
+document.getElementById("delete-btn").addEventListener("click", async () => {
+  if (!confirm("Delete this meeting and its transcript? This can't be undone.")) return;
+  const response = await api(`${API_BASE}/${currentMeetingId}`, { method: "DELETE" });
+  if (response.ok) resetToUpload();
+});
+
+// ---- ask this meeting ----
+const askForm = document.getElementById("ask-form");
+askForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const input = document.getElementById("ask-input");
+  const answerBox = document.getElementById("ask-answer");
+  const button = document.getElementById("ask-btn");
+  button.disabled = true;
+  answerBox.hidden = false;
+  answerBox.textContent = "Thinking…";
+  try {
+    const response = await api(`${API_BASE}/${currentMeetingId}/ask`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question: input.value }),
+    });
+    const body = await response.json();
+    answerBox.textContent = response.ok ? body.answer : body.detail || "Could not get an answer.";
+  } catch (err) {
+    answerBox.textContent = "Could not reach the server.";
+  } finally {
+    button.disabled = false;
+  }
+});
+
+// ---- record in the browser ----
+const recordBtn = document.getElementById("record-btn");
+const recordTimer = document.getElementById("record-timer");
+let recorder = null;
+let recordStarted = 0;
+let recordTick = null;
+
+function stopRecordingUi() {
+  clearInterval(recordTick);
+  recordBtn.classList.remove("is-recording");
+  recordBtn.textContent = "● Record a meeting";
+  recordTimer.hidden = true;
+}
+
+recordBtn.addEventListener("click", async () => {
+  if (recorder && recorder.state === "recording") {
+    recorder.stop();
+    return;
+  }
+  if (!navigator.mediaDevices || !window.MediaRecorder) {
+    uploadError.textContent = "Recording isn't supported in this browser — upload a file instead.";
+    uploadError.hidden = false;
+    return;
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const chunks = [];
+    recorder = new MediaRecorder(stream);
+    recorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+    recorder.onstop = () => {
+      stream.getTracks().forEach((t) => t.stop());
+      stopRecordingUi();
+      const type = (recorder.mimeType || "audio/webm").split(";")[0];
+      const ext = type.includes("ogg") ? "ogg" : type.includes("mp4") ? "mp4" : "webm";
+      const file = new File(chunks, `recording-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")}.${ext}`, { type });
+      const transfer = new DataTransfer();
+      transfer.items.add(file);
+      audioInput.files = transfer.files;
+      showSelectedFile(file);
+    };
+    recorder.start(1000);
+    recordStarted = Date.now();
+    recordBtn.classList.add("is-recording");
+    recordBtn.textContent = "■ Stop recording";
+    recordTimer.hidden = false;
+    recordTick = setInterval(() => {
+      recordTimer.textContent = fmtTime((Date.now() - recordStarted) / 1000);
+    }, 500);
+  } catch (err) {
+    uploadError.textContent = "Couldn't access the microphone. Allow microphone access and try again.";
+    uploadError.hidden = false;
+  }
+});
 
 loadHistory();

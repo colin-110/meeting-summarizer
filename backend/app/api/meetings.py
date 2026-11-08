@@ -21,7 +21,7 @@ from backend.app.schemas.meeting import (
     MeetingStatusOut,
     MeetingSummaryOut,
 )
-from backend.app.services import qa_service
+from backend.app.services import processing_service, qa_service
 from backend.app.services.storage_service import UploadValidationError, save_upload
 from backend.app.utils.rate_limit import RateLimitExceeded, check_rate_limit
 
@@ -148,4 +148,5 @@ def remove_meeting(meeting_id: str, owner: str = Depends(owner_id)) -> Response:
     if meeting.status == MeetingStatus.PROCESSING:
         raise HTTPException(status_code=409, detail="Can't delete a meeting while it is processing.")
     delete_meeting(meeting_id)
+    processing_service.release_audio(meeting, force=True)
     return Response(status_code=204)
