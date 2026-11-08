@@ -37,20 +37,6 @@ The upload endpoint returns a queued status instead of waiting for transcription
 - **Layered file validation:** check extension, content type, size, and byte signatures.
 - **Structured model output:** normalize decisions, action items, owners, deadlines, and open questions.
 - **Failure handling:** explicitly handle provider errors, malformed responses, silent audio, rate limits, transient failures, and server restarts.
-- **Evaluation:** keep model-quality evaluation separate from application behavior so quality changes can be measured.
-
-## Accuracy evaluation
-
-The repository includes a standalone evaluation pipeline using known meeting scripts.
-
-Current documented results:
-
-- Average transcription WER: approximately **1.8%**
-- Decision recall: **18/18**
-- Action-item recall: **21/21**
-- Open-question recall: **14/15**
-
-These results come from the repository's evaluation runs and should be treated as dataset-specific measurements, not general model accuracy.
 
 ## Tech stack
 
@@ -84,18 +70,11 @@ Run tests:
 pytest -v
 ~~~
 
-Run the evaluation:
-
-~~~bash
-python -m eval.run_accuracy_eval
-~~~
-
 ## Repository structure
 
 - \`backend/app/\` — API, processing, storage, database, models, and utilities
 - \`frontend/\` — static frontend
 - \`tests/\` — automated tests
-- \`eval/\` — standalone evaluation
 - \`.github/workflows/\` — CI
 
 ## License
