@@ -9,6 +9,8 @@ os.environ["WORKER_CONCURRENCY"] = "0"
 # Tests simulate different clients through X-Forwarded-For.
 os.environ["TRUST_PROXY_HEADERS"] = "true"
 os.environ.pop("GROQ_API_KEY", None)
+# Never read the developer's .env: tests must not reach the real AI provider.
+os.environ["ENV_FILE"] = ""
 
 
 @pytest.fixture(autouse=True)

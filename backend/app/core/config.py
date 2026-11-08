@@ -9,11 +9,13 @@ import os
 from pathlib import Path
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
-_ENV_FILE = _PROJECT_ROOT / ".env"
+# ENV_FILE overrides the path; set it to "" to skip loading a file (tests do).
+_ENV_FILE = os.environ.get("ENV_FILE", str(_PROJECT_ROOT / ".env"))
 
 
-def _load_env_file(path: Path) -> None:
-    if not path.exists():
+def _load_env_file(name: str) -> None:
+    path = Path(name)
+    if not name or not path.is_file():
         return
     for raw_line in path.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()

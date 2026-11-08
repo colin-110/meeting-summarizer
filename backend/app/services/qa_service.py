@@ -135,7 +135,6 @@ def build_context(owner_id: str, question: str, meeting_id: Optional[str] = None
 def answer(context: str, question: str, *, client: Optional[Groq] = None) -> str:
     if not context.strip():
         raise QAError("No meetings matched that question. Try different words.")
-    client = client or Groq()
     max_tokens = 1200
     # Reserve a realistic answer size, not the cap; settled to real usage below.
     estimate = int((len(_SYSTEM_PROMPT) + len(context) + len(question)) / 3.2) + 400
@@ -152,6 +151,7 @@ def answer(context: str, question: str, *, client: Optional[Groq] = None) -> str
         raise QABusyError("The AI is busy right now — try again in a minute.", exc.retry_after) from exc
     model = models[i]
     used = estimate
+    client = client or Groq()
 
     def _call():
         return client.chat.completions.create(
