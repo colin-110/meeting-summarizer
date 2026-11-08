@@ -19,7 +19,9 @@ from backend.app.services import processing_service
 
 log = get_logger(__name__)
 
-_IDLE_POLL_SECONDS = 2.0
+# Idle workers re-check the queue this often. A separate worker process can't
+# be woken directly by the web process, so this bounds pickup latency.
+_IDLE_POLL_SECONDS = 1.0
 _PURGE_INTERVAL_SECONDS = 3600
 
 

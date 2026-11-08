@@ -173,13 +173,19 @@ def _structured_call(
     user: str,
     max_tokens: int,
     reasoning_effort: Optional[str] = None,
+    expected_output: int = 900,
 ) -> dict:
     """One strict-JSON-schema call, held to the shared per-model token budget
     and settled with the real usage afterwards. If the model runs out of
-    output room (it reasons before answering), retry once with less reasoning."""
+    output room (it reasons before answering), retry once with less reasoning.
+
+    The budget reserves the *expected* output (measured: ~400-550 completion
+    tokens for a summary), not the max_tokens cap — reserving the cap made
+    concurrent jobs wait for room they never needed. Overshoot is absorbed by
+    the headroom between LLM_TOKENS_PER_MINUTE and the provider's real limit."""
     effort = reasoning_effort
     for attempt in (1, 2):
-        estimate = _estimate_tokens(system, user) + max_tokens
+        estimate = _estimate_tokens(system, user) + expected_output
         reservation = acquire_budget(
             f"tokens:{model}",
             estimate,

@@ -128,7 +128,8 @@ def answer(context: str, question: str, *, client: Optional[Groq] = None) -> str
         raise QAError("No meetings matched that question. Try different words.")
     client = client or Groq()
     max_tokens = 1200
-    estimate = int((len(_SYSTEM_PROMPT) + len(context) + len(question)) / 3.2) + max_tokens
+    # Reserve a realistic answer size, not the cap; settled to real usage below.
+    estimate = int((len(_SYSTEM_PROMPT) + len(context) + len(question)) / 3.2) + 400
     reservation = acquire_budget(
         f"tokens:{config.QA_MODEL}", estimate,
         limit=config.LLM_TOKENS_PER_MINUTE, max_wait_seconds=20,

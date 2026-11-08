@@ -129,7 +129,7 @@ def test_long_meeting_map_reduce_with_chapters_and_resume(monkeypatch):
     monkeypatch.setattr(config, "SECTION_CHARS", 350)
     calls = []
 
-    def fake_call(client, *, model, system, user, max_tokens, reasoning_effort=None):
+    def fake_call(client, *, model, system, user, max_tokens, reasoning_effort=None, **kw):
         calls.append(model)
         if "Section notes" in user:
             return dict(NOTE, title="Whole Meeting", summary="merged")
@@ -311,3 +311,20 @@ def test_standalone_worker_process_drains_queue_and_stops_on_sigterm(tmp_path):
     finally:
         proc.send_signal(signal.SIGTERM)
         assert proc.wait(timeout=15) == 0
+
+
+def test_budget_reserves_expected_output_not_the_cap(monkeypatch):
+    reserved = []
+    monkeypatch.setattr(summarization_service, "acquire_budget", lambda key, amount, **k: reserved.append(amount) or 1)
+    monkeypatch.setattr(summarization_service, "settle_budget", lambda *a, **k: None)
+
+    class _C:
+        class chat:
+            class completions:
+                @staticmethod
+                def create(**kw):
+                    msg = type("M", (), {"content": json.dumps(NOTE)})()
+                    return type("R", (), {"choices": [type("Ch", (), {"message": msg})()]})()
+
+    summarization_service._structured_call(_C(), model="m", system="s" * 320, user="u" * 320, max_tokens=3000)
+    assert reserved[0] < 1200  # ~250 input + 900 expected output, not +3000

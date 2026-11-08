@@ -40,6 +40,12 @@ const STAGE_TEXT = {
   transcribing: "Transcribing the recording…",
   summarizing: "Writing the summary…",
 };
+function stageText(stage) {
+  if (!stage) return null;
+  if (STAGE_TEXT[stage]) return STAGE_TEXT[stage];
+  return stage.charAt(0).toUpperCase() + stage.slice(1) + "…"; // e.g. "Summarizing section 2 of 5…"
+}
+
 let currentMeetingId = null;
 let currentMeeting = null;
 
@@ -213,9 +219,11 @@ function pollStatus(meetingId) {
       const body = await response.json();
 
       if (body.status === "PROCESSING") {
-        statusText.textContent = STAGE_TEXT[body.stage] || "Processing…";
+        statusText.textContent = stageText(body.stage) || "Processing…";
       } else if (body.status === "QUEUED") {
-        statusText.textContent = "Queued…";
+        statusText.textContent = body.stage === "waiting for AI capacity"
+          ? "The AI service is busy — your meeting is queued and will continue automatically…"
+          : "Queued…";
       } else if (body.status === "COMPLETED") {
         clearInterval(pollTimer);
         await loadResult(meetingId);
@@ -273,12 +281,63 @@ function renderTranscript(meeting) {
     box.textContent = meeting.transcript || "—";
     return;
   }
-  for (const seg of meeting.segments) {
+  meeting.segments.forEach((seg, i) => {
     const row = document.createElement("div");
     row.className = "seg";
+    row.dataset.start = seg.start;
     row.innerHTML = `<span class="seg-time">${fmtTime(seg.start)}</span><span>${escapeHtml(seg.text)}</span>`;
     box.appendChild(row);
+  });
+}
+
+function jumpToTime(seconds) {
+  const details = document.querySelector(".transcript-details");
+  details.open = true;
+  const rows = [...document.querySelectorAll("#result-transcript .seg")];
+  const target = rows.filter((r) => Number(r.dataset.start) <= seconds + 0.01).pop() || rows[0];
+  if (!target) return;
+  target.scrollIntoView({ behavior: "smooth", block: "center" });
+  target.classList.add("is-flash");
+  setTimeout(() => target.classList.remove("is-flash"), 1600);
+}
+
+function renderChapters(meeting) {
+  const block = document.getElementById("chapters-block");
+  const list = document.getElementById("result-chapters");
+  list.innerHTML = "";
+  const chapters = meeting.chapters || [];
+  block.hidden = chapters.length < 2;
+  for (const ch of chapters) {
+    const li = document.createElement("li");
+    li.innerHTML = `<span class="seg-time">${fmtTime(ch.start)}</span><span class="chapter-title">${escapeHtml(ch.title)}</span>`;
+    li.addEventListener("click", () => jumpToTime(ch.start));
+    list.appendChild(li);
   }
+}
+
+function renderAnswer(box, body, { openOtherMeetings }) {
+  box.innerHTML = "";
+  const text = document.createElement("div");
+  text.textContent = body.answer;
+  box.appendChild(text);
+  const seen = new Set();
+  const chips = document.createElement("div");
+  chips.className = "sources";
+  for (const src of body.sources || []) {
+    const key = `${src.meeting_id}:${Math.floor(src.start)}`;
+    if (seen.has(key) || seen.size >= 6) continue;
+    seen.add(key);
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "source-chip";
+    chip.textContent = openOtherMeetings ? `${src.title || "Meeting"} · ${fmtTime(src.start)}` : fmtTime(src.start);
+    chip.addEventListener("click", async () => {
+      if (openOtherMeetings) await loadResult(src.meeting_id);
+      jumpToTime(src.start);
+    });
+    chips.appendChild(chip);
+  }
+  if (chips.children.length) box.appendChild(chips);
 }
 
 function renderResult(meeting) {
@@ -336,6 +395,7 @@ function renderResult(meeting) {
   }
 
   renderTranscript(meeting);
+  renderChapters(meeting);
 }
 
 document.getElementById("new-upload-btn").addEventListener("click", resetToUpload);
@@ -394,6 +454,9 @@ historyMore.addEventListener("click", () => loadHistory(true));
 async function openMeeting(meeting) {
   if (meeting.status === "COMPLETED") {
     await loadResult(meeting.id);
+  } else if (meeting.status === "RECORDING") {
+    failureMessage.textContent = "This recording was never finished, so there's nothing to summarize.";
+    showOnly(errorSection);
   } else if (meeting.status === "FAILED") {
     const response = await api(`${API_BASE}/${meeting.id}`);
     const detail = await response.json();
@@ -462,7 +525,8 @@ askForm.addEventListener("submit", async (event) => {
       body: JSON.stringify({ question: input.value }),
     });
     const body = await response.json();
-    answerBox.textContent = response.ok ? body.answer : body.detail || "Could not get an answer.";
+    if (response.ok) renderAnswer(answerBox, body, { openOtherMeetings: false });
+    else answerBox.textContent = body.detail || "Could not get an answer.";
   } catch (err) {
     answerBox.textContent = "Could not reach the server.";
   } finally {
@@ -470,58 +534,150 @@ askForm.addEventListener("submit", async (event) => {
   }
 });
 
-// ---- record in the browser ----
+// ---- ask across all meetings ----
+document.getElementById("ask-all-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const input = document.getElementById("ask-all-input");
+  const box = document.getElementById("ask-all-answer");
+  const button = document.getElementById("ask-all-btn");
+  button.disabled = true;
+  box.hidden = false;
+  box.textContent = "Searching your meetings…";
+  try {
+    const response = await api(`${API_ORIGIN}/api/v1/ask`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question: input.value }),
+    });
+    const body = await response.json();
+    if (response.ok) renderAnswer(box, body, { openOtherMeetings: true });
+    else box.textContent = body.detail || "Could not get an answer.";
+  } catch (err) {
+    box.textContent = "Could not reach the server.";
+  } finally {
+    button.disabled = false;
+  }
+});
+
+// ---- live recording ----
+// The recorder is restarted every PIECE_SECONDS so each piece is a complete,
+// independently decodable file. Each piece is uploaded (and transcribed by
+// the server) while recording continues, so stopping only leaves the summary.
+const PIECE_SECONDS = 45;
+const RECORDINGS_API = `${API_ORIGIN}/api/v1/recordings`;
 const recordBtn = document.getElementById("record-btn");
 const recordTimer = document.getElementById("record-timer");
-let recorder = null;
-let recordStarted = 0;
-let recordTick = null;
+let live = null;
 
-function stopRecordingUi() {
-  clearInterval(recordTick);
-  recordBtn.classList.remove("is-recording");
-  recordBtn.textContent = "● Record a meeting";
-  recordTimer.hidden = true;
+async function uploadPiece(recordingId, seq, offset, blob, ext) {
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    try {
+      const form = new FormData();
+      form.append("seq", seq);
+      form.append("offset", offset.toFixed(2));
+      form.append("audio", new File([blob], `piece-${seq}.${ext}`, { type: blob.type }));
+      const response = await api(`${RECORDINGS_API}/${recordingId}/chunks`, { method: "POST", body: form });
+      if (response.ok) return (await response.json()).transcribed;
+      if (response.status < 500 && response.status !== 429) return false; // won't succeed on retry
+    } catch (err) {
+      // network blip — retry below
+    }
+    await new Promise((r) => setTimeout(r, 1000 * 2 ** attempt));
+  }
+  return false;
 }
 
-recordBtn.addEventListener("click", async () => {
-  if (recorder && recorder.state === "recording") {
-    recorder.stop();
-    return;
-  }
+function updateLiveLabel() {
+  const elapsed = (Date.now() - live.startedAt) / 1000;
+  recordTimer.textContent = `${fmtTime(elapsed)} · ${live.done} piece${live.done === 1 ? "" : "s"} transcribed`;
+}
+
+function startPiece() {
+  const recorder = new MediaRecorder(live.stream);
+  const parts = [];
+  const seq = live.seq++;
+  const offset = (Date.now() - live.startedAt) / 1000;
+  recorder.ondataavailable = (e) => e.data.size && parts.push(e.data);
+  recorder.onstop = () => {
+    const type = (recorder.mimeType || "audio/webm").split(";")[0];
+    const ext = type.includes("ogg") ? "ogg" : type.includes("mp4") ? "mp4" : "webm";
+    const blob = new Blob(parts, { type });
+    if (blob.size > 0) {
+      live.pending.push(
+        uploadPiece(live.id, seq, offset, blob, ext).then((ok) => {
+          if (ok) live.done++;
+        }),
+      );
+    }
+  };
+  recorder.start();
+  live.recorder = recorder;
+}
+
+async function startLiveRecording() {
   if (!navigator.mediaDevices || !window.MediaRecorder) {
     uploadError.textContent = "Recording isn't supported in this browser — upload a file instead.";
     uploadError.hidden = false;
     return;
   }
+  let stream;
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const chunks = [];
-    recorder = new MediaRecorder(stream);
-    recorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);
-    recorder.onstop = () => {
-      stream.getTracks().forEach((t) => t.stop());
-      stopRecordingUi();
-      const type = (recorder.mimeType || "audio/webm").split(";")[0];
-      const ext = type.includes("ogg") ? "ogg" : type.includes("mp4") ? "mp4" : "webm";
-      const file = new File(chunks, `recording-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")}.${ext}`, { type });
-      const transfer = new DataTransfer();
-      transfer.items.add(file);
-      audioInput.files = transfer.files;
-      showSelectedFile(file);
-    };
-    recorder.start(1000);
-    recordStarted = Date.now();
-    recordBtn.classList.add("is-recording");
-    recordBtn.textContent = "■ Stop recording";
-    recordTimer.hidden = false;
-    recordTick = setInterval(() => {
-      recordTimer.textContent = fmtTime((Date.now() - recordStarted) / 1000);
-    }, 500);
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch (err) {
     uploadError.textContent = "Couldn't access the microphone. Allow microphone access and try again.";
     uploadError.hidden = false;
+    return;
   }
-});
+  const response = await api(RECORDINGS_API, { method: "POST" });
+  if (!response.ok) {
+    stream.getTracks().forEach((t) => t.stop());
+    uploadError.textContent = (await response.json()).detail || "Couldn't start a recording.";
+    uploadError.hidden = false;
+    return;
+  }
+  live = { id: (await response.json()).id, stream, seq: 0, done: 0, pending: [], startedAt: Date.now() };
+  uploadError.hidden = true;
+  startPiece();
+  live.rotate = setInterval(() => {
+    live.recorder.stop();
+    startPiece();
+  }, PIECE_SECONDS * 1000);
+  live.tick = setInterval(updateLiveLabel, 500);
+  recordBtn.classList.add("is-recording");
+  recordBtn.textContent = "■ Stop recording";
+  recordTimer.hidden = false;
+  updateLiveLabel();
+}
+
+async function stopLiveRecording() {
+  const session = live;
+  clearInterval(session.rotate);
+  clearInterval(session.tick);
+  recordBtn.disabled = true;
+  recordBtn.textContent = "Finishing…";
+  await new Promise((resolve) => {
+    session.recorder.addEventListener("stop", resolve, { once: true });
+    session.recorder.stop();
+  });
+  session.stream.getTracks().forEach((t) => t.stop());
+  await Promise.all(session.pending);
+  live = null;
+  recordBtn.disabled = false;
+  recordBtn.classList.remove("is-recording");
+  recordBtn.textContent = "● Record a meeting";
+  recordTimer.hidden = true;
+
+  const response = await api(`${RECORDINGS_API}/${session.id}/finish`, { method: "POST" });
+  const body = await response.json();
+  if (!response.ok) {
+    uploadError.textContent = body.detail || "Couldn't finish the recording.";
+    uploadError.hidden = false;
+    return;
+  }
+  showOnly(statusSection);
+  pollStatus(session.id);
+}
+
+recordBtn.addEventListener("click", () => (live ? stopLiveRecording() : startLiveRecording()));
 
 loadHistory();

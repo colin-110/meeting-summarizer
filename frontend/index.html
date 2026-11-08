@@ -67,6 +67,16 @@
         <button type="button" id="record-btn" class="secondary-btn">● Record a meeting</button>
         <span id="record-timer" class="muted" hidden>00:00</span>
       </div>
+      <p class="record-hint muted">Recordings are transcribed while you talk, so notes are ready seconds after you stop.</p>
+
+      <div class="ask-all">
+        <h3>Ask across all your meetings</h3>
+        <form id="ask-all-form" class="ask-form">
+          <input id="ask-all-input" type="text" maxlength="500" placeholder="e.g. What did we decide about pricing?" required />
+          <button type="submit" id="ask-all-btn">Ask</button>
+        </form>
+        <div id="ask-all-answer" class="ask-answer" hidden></div>
+      </div>
       <p id="upload-error" class="error" hidden></p>
 
       <div class="how-it-works">
@@ -138,6 +148,11 @@
         Open Questions
       </h3>
       <ul id="result-open-questions"></ul>
+
+      <div id="chapters-block" hidden>
+        <h3>Chapters</h3>
+        <ul id="result-chapters" class="chapter-list"></ul>
+      </div>
 
       <h3>Ask this meeting</h3>
       <form id="ask-form" class="ask-form">
