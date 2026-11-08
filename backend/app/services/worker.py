@@ -1,9 +1,12 @@
 """Background workers that drain the SQLite-backed job queue.
 
 The queue is just the `meetings` table: an upload inserts a QUEUED row and
-workers atomically claim the oldest one (meetings_repo.claim_next). Because
-the queue lives in the database, jobs survive restarts — on startup anything
-left PROCESSING is put back on the queue. No Redis/Celery needed.
+workers atomically lease the oldest one (meetings_repo.claim_next). While a
+job runs, a heartbeat renews its lease; if the worker dies, the lease
+expires and any other worker — in this process or another — takes it over.
+Because the queue lives in the database, jobs survive restarts, and workers
+can run inside the web process or as separate processes
+(`python -m backend.app.worker`). No Redis/Celery needed.
 """
 
 import threading
@@ -11,7 +14,7 @@ import time
 
 from backend.app.core import config
 from backend.app.core.logging import get_logger
-from backend.app.database.meetings_repo import claim_next, purge_older_than
+from backend.app.database.meetings_repo import claim_next, purge_older_than, renew_lease
 from backend.app.services import processing_service
 
 log = get_logger(__name__)
@@ -54,11 +57,29 @@ class WorkerPool:
                     self._wake.wait(_IDLE_POLL_SECONDS)
                     self._wake.clear()
                     continue
-                processing_service.run(meeting_id)
+                self._run_with_heartbeat(meeting_id)
             except Exception:
                 # A bug must never kill the worker thread.
                 log.exception("worker loop error")
                 time.sleep(_IDLE_POLL_SECONDS)
+
+    def _run_with_heartbeat(self, meeting_id: str) -> None:
+        done = threading.Event()
+
+        def beat() -> None:
+            while not done.wait(config.HEARTBEAT_SECONDS):
+                try:
+                    renew_lease(meeting_id)
+                except Exception:
+                    log.exception("lease renewal failed id=%s", meeting_id)
+
+        heartbeat = threading.Thread(target=beat, name=f"heartbeat-{meeting_id[:8]}", daemon=True)
+        heartbeat.start()
+        try:
+            processing_service.run(meeting_id)
+        finally:
+            done.set()
+            heartbeat.join(timeout=2)
 
     def _maybe_purge(self) -> None:
         if config.RETENTION_DAYS <= 0:
@@ -68,5 +89,7 @@ class WorkerPool:
             return
         self._last_purge = now
         deleted = purge_older_than(config.RETENTION_DAYS)
+        for meeting in deleted:
+            processing_service.release_audio(meeting, force=True)
         if deleted:
             log.info("retention purge removed %d meeting(s)", len(deleted))

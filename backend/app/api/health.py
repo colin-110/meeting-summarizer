@@ -1,6 +1,10 @@
 from fastapi import APIRouter
+from fastapi.responses import PlainTextResponse
 
+from backend.app.core import config
 from backend.app.database.connection import get_connection
+from backend.app.database.meetings_repo import queue_stats
+from backend.app.utils.rate_limit import budget_used
 
 router = APIRouter()
 
@@ -18,3 +22,26 @@ def health() -> dict:
         "status": "ok" if db_ok else "degraded",
         "database": "ok" if db_ok else "unreachable",
     }
+
+
+@router.get("/metrics", response_class=PlainTextResponse)
+def metrics() -> str:
+    """Prometheus text format: queue health and provider budget usage.
+    Aggregate counts only — nothing about individual meetings or users."""
+    stats = queue_stats()
+    lines = ["# TYPE meetings gauge"]
+    for status, n in sorted(stats["by_status"].items()):
+        lines.append(f'meetings{{status="{status}"}} {n}')
+    lines += [
+        "# TYPE queue_oldest_waiting_seconds gauge",
+        f"queue_oldest_waiting_seconds {stats['oldest_queued_seconds']:.1f}",
+        "# TYPE meetings_completed_last_hour gauge",
+        f"meetings_completed_last_hour {stats['completed_last_hour']}",
+        "# TYPE processing_seconds_avg_last_hour gauge",
+        f"processing_seconds_avg_last_hour {stats['avg_processing_seconds_last_hour']:.1f}",
+        "# TYPE provider_tokens_last_minute gauge",
+    ]
+    for model in sorted({config.SUMMARY_MODEL, config.SECTION_MODEL, config.QA_MODEL}):
+        lines.append(f'provider_tokens_last_minute{{model="{model}"}} {budget_used(f"tokens:{model}"):.0f}')
+    lines.append(f"provider_tokens_per_minute_limit {config.LLM_TOKENS_PER_MINUTE}")
+    return "\n".join(lines) + "\n"

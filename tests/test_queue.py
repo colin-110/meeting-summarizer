@@ -9,7 +9,8 @@ from backend.app.database.meetings_repo import (
     get_meeting,
     list_meetings,
     purge_older_than,
-    requeue_stuck_processing,
+    defer,
+    renew_lease,
     save_summary,
     save_transcript,
     update_status,
@@ -44,19 +45,73 @@ def test_claim_next_takes_oldest_queued_once(tmp_path, monkeypatch):
     assert claimed.attempts == 1
 
 
-def test_requeue_stuck_retries_then_gives_up(tmp_path, monkeypatch):
+def _expire_lease(meeting_id):
+    from backend.app.database.connection import get_connection
+
+    conn = get_connection()
+    conn.execute("UPDATE meetings SET lease_until = 0 WHERE id = ?", (meeting_id,))
+    conn.commit()
+    conn.close()
+
+
+def test_expired_lease_is_reclaimed_then_abandoned_after_max_attempts(tmp_path, monkeypatch):
     _db(tmp_path, monkeypatch)
+    monkeypatch.setattr(config, "MAX_JOB_ATTEMPTS", 3)
     m = _queued("one.mp3")
 
-    for expected_attempts in (1, 2):
-        claim_next()
-        assert requeue_stuck_processing(max_attempts=3) == (1, 0)
-        assert get_meeting(m.id).status == MeetingStatus.QUEUED
+    assert claim_next() == m.id
+    assert claim_next() is None  # leased: nobody else can take it
+
+    for expected_attempts in (2, 3):
+        _expire_lease(m.id)  # its worker "died"
+        assert claim_next() == m.id
         assert get_meeting(m.id).attempts == expected_attempts
 
-    claim_next()  # third attempt interrupted -> abandoned
-    assert requeue_stuck_processing(max_attempts=3) == (0, 1)
+    _expire_lease(m.id)
+    assert claim_next() is None
     assert get_meeting(m.id).status == MeetingStatus.FAILED
+
+
+def test_heartbeat_keeps_a_running_job_leased(tmp_path, monkeypatch):
+    _db(tmp_path, monkeypatch)
+    m = _queued("one.mp3")
+    claim_next()
+    _expire_lease(m.id)
+    renew_lease(m.id)
+    assert claim_next() is None
+
+
+def test_deferred_job_waits_and_does_not_burn_an_attempt(tmp_path, monkeypatch):
+    _db(tmp_path, monkeypatch)
+    m = _queued("one.mp3")
+    claim_next()
+    defer(m.id, 60, "waiting for AI capacity")
+    deferred = get_meeting(m.id)
+    assert deferred.status == MeetingStatus.QUEUED and deferred.attempts == 0
+    assert claim_next() is None  # not before its delay
+
+    defer(m.id, -1, "ready")
+    assert claim_next() == m.id
+
+
+def test_two_processes_never_claim_the_same_job(tmp_path, monkeypatch):
+    """Real OS processes racing on one database file."""
+    import subprocess
+    import sys
+
+    _db(tmp_path, monkeypatch)
+    ids = {_queued(f"j{i}.mp3", f"h{i}").id for i in range(40)}
+    script = (
+        "import sys; from backend.app.core import config; from pathlib import Path;"
+        f"config.DATABASE_PATH = Path({str(tmp_path / 'q.db')!r});"
+        "from backend.app.database.meetings_repo import claim_next\n"
+        "out = []\n"
+        "while (i := claim_next()) is not None: out.append(i)\n"
+        "print(','.join(out))"
+    )
+    procs = [subprocess.Popen([sys.executable, "-c", script], stdout=subprocess.PIPE, text=True) for _ in range(4)]
+    claimed = [x for p in procs for x in p.communicate(timeout=60)[0].strip().split(",") if x]
+    assert sorted(claimed) == sorted(ids)  # every job exactly once, across 4 processes
 
 
 def test_worker_pool_processes_queued_jobs(tmp_path, monkeypatch):

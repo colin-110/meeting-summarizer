@@ -93,13 +93,13 @@ def test_ask_answers_from_transcript(app, monkeypatch):
 
     def fake_ask(meeting, question, **kw):
         seen["context"] = qa_service.timestamped_transcript(meeting)
-        return "Two engineers [00:03]."
+        return {"answer": "Two engineers [00:03].", "sources": []}
 
     monkeypatch.setattr(qa_service, "ask", fake_ask)
     with TestClient(app) as client:
         r = client.post(f"/api/v1/meetings/{mid}/ask", json={"question": "Who is being hired?"}, headers=_h(_token("a")))
         short = client.post(f"/api/v1/meetings/{mid}/ask", json={"question": "hi"}, headers=_h(_token("a")))
-    assert r.status_code == 200 and r.json() == {"answer": "Two engineers [00:03]."}
+    assert r.status_code == 200 and r.json() == {"answer": "Two engineers [00:03].", "sources": []}
     assert seen["context"] == "[00:03] We agreed to hire two engineers."
     assert short.status_code == 422
 
@@ -107,7 +107,7 @@ def test_ask_answers_from_transcript(app, monkeypatch):
 def test_ask_requires_completed_meeting_and_is_rate_limited(app, monkeypatch):
     pending = create_meeting("p.mp3", "hp", "x", owner_id=_owner(_token("r")))
     mid = _completed(_token("r"))
-    monkeypatch.setattr(qa_service, "ask", lambda *a, **k: "ok")
+    monkeypatch.setattr(qa_service, "ask", lambda *a, **k: {"answer": "ok", "sources": []})
     from backend.app.api import meetings as api
     monkeypatch.setattr(api, "_ASK_RATE_LIMIT", 2)
     with TestClient(app, headers=_h(_token("r"))) as client:
@@ -168,27 +168,85 @@ def test_qa_to_markdown_handles_empty_meeting():
     assert "_None recorded._" in md and "# x.mp3" in md
 
 
-def test_qa_ask_builds_prompt_and_wraps_errors():
-    from backend.app.models.meeting import Meeting
+class _FakeLLM:
+    def __init__(self, reply=" Answer. "):
+        self.calls = []
+        outer = self
 
-    meeting = Meeting(id="1", filename="x", file_hash="h", audio_path="p", status="COMPLETED",
-                      transcript="t", segments=[{"start": 3725.0, "end": 3730.0, "text": "late remark"}])
-    captured = {}
+        class _Completions:
+            @staticmethod
+            def create(**kw):
+                outer.calls.append(kw)
+                msg = type("M", (), {"content": reply})()
+                return type("R", (), {"choices": [type("Ch", (), {"message": msg})()],
+                                      "usage": type("U", (), {"total_tokens": 321})()})()
 
-    class _C:
-        class chat:
-            class completions:
-                @staticmethod
-                def create(**kw):
-                    captured.update(kw)
-                    return type("R", (), {"choices": [type("Ch", (), {"message": type("M", (), {"content": " Answer. "})()})()]})()
+        self.chat = type("Chat", (), {"completions": _Completions()})()
 
-    assert qa_service.ask(meeting, "What was said?", client=_C()) == "Answer."
-    assert "[1:02:05] late remark" in captured["messages"][1]["content"]  # hour-long timestamps format correctly
-    assert captured["model"] == "openai/gpt-oss-20b"
 
-    with pytest.raises(qa_service.QAError, match="no transcript"):
-        qa_service.ask(Meeting(id="2", filename="x", file_hash="h", audio_path="p", status="COMPLETED"), "q?", client=_C())
+def _seed(owner_token, title, segments, summary="s"):
+    m = create_meeting(f"{title}.mp3", "h" + title, "x", owner_id=_owner(owner_token))
+    save_transcript(m.id, " ".join(s["text"] for s in segments))
+    save_segments(m.id, segments, segments[-1]["end"])
+    save_summary(m.id, summary, ["Ship in October"], [], title=title)
+    update_status(m.id, MeetingStatus.COMPLETED)
+    return get_meeting(m.id)
+
+
+def test_qa_short_meeting_sends_whole_transcript_with_tags():
+    m = _seed(_token("q"), "Short", [{"start": 3725.0, "end": 3730.0, "text": "late remark about budgets"}])
+    llm = _FakeLLM()
+    out = qa_service.ask(m, "What was said?", client=llm)
+    assert out["answer"] == "Answer."
+    prompt = llm.calls[0]["messages"][1]["content"]
+    assert "[M1 1:02:05] late remark about budgets" in prompt  # hour timestamps format correctly
+    assert "[M1 notes] Title: Short" in prompt and "Decisions: Ship in October" in prompt
+    assert llm.calls[0]["model"] == "openai/gpt-oss-20b"
+
+
+def test_qa_long_meeting_sends_only_relevant_passages(monkeypatch):
+    monkeypatch.setattr(config, "QA_CONTEXT_CHARS", 2000)
+    filler = [{"start": float(i * 5), "end": float(i * 5 + 5), "text": f"routine filler sentence number {i} about nothing"}
+              for i in range(400)]
+    filler[250] = {"start": 1250.0, "end": 1255.0, "text": "Priya will migrate the billing database next Tuesday"}
+    m = _seed(_token("q"), "Long", filler)
+    llm = _FakeLLM()
+    out = qa_service.ask(m, "Who is migrating the billing database?", client=llm)
+
+    prompt = llm.calls[0]["messages"][1]["content"]
+    assert "Priya will migrate the billing database" in prompt
+    assert "[M1 20:50]" in prompt
+    assert len(prompt) < 4000  # bounded no matter how long the meeting is
+    assert out["sources"][0]["start"] == 1250.0
+
+
+def test_qa_ask_all_spans_meetings_and_stays_private():
+    _seed(_token("q"), "Pricing Review", [{"start": 10.0, "end": 14.0, "text": "we will raise the pro plan price to twelve dollars"}])
+    _seed(_token("q"), "Hiring Sync", [{"start": 5.0, "end": 9.0, "text": "pricing for contractors stays the same"}])
+    _seed(_token("z"), "Someone Else", [{"start": 1.0, "end": 2.0, "text": "pricing secret from another user"}])
+    llm = _FakeLLM()
+
+    out = qa_service.ask_all(_owner(_token("q")), "What did we decide about pricing?", client=llm)
+
+    prompt = llm.calls[0]["messages"][1]["content"]
+    assert "twelve dollars" in prompt and "contractors" in prompt
+    assert "secret from another user" not in prompt
+    assert {s["title"] for s in out["sources"]} == {"Pricing Review", "Hiring Sync"}
+
+    with pytest.raises(qa_service.QAError, match="No meetings matched"):
+        qa_service.ask_all(_owner(_token("q")), "zebra giraffe", client=llm)
+
+
+def test_ask_all_endpoint(app, monkeypatch):
+    _seed(_token("w"), "Pricing Review", [{"start": 10.0, "end": 14.0, "text": "raise the price to twelve dollars"}])
+    monkeypatch.setattr(qa_service, "answer", lambda context, q, **k: "Twelve dollars [M1 00:10].")
+    with TestClient(app, headers=_h(_token("w"))) as client:
+        r = client.post("/api/v1/ask", json={"question": "what about the price?"})
+        miss = client.post("/api/v1/ask", json={"question": "zebra giraffe"})
+    assert r.status_code == 200
+    assert r.json()["answer"] == "Twelve dollars [M1 00:10]."
+    assert r.json()["sources"][0]["title"] == "Pricing Review"
+    assert miss.status_code == 502
 
 
 def test_new_audio_formats_accepted_with_valid_signatures(app):

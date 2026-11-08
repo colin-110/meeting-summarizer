@@ -39,6 +39,38 @@ CHUNK_SECONDS = int(os.environ.get("CHUNK_SECONDS", "600"))
 TRANSCRIBE_PARALLELISM = int(os.environ.get("TRANSCRIBE_PARALLELISM", "3"))
 # A job interrupted this many times (restarts/crashes) is failed instead of retried forever.
 MAX_JOB_ATTEMPTS = int(os.environ.get("MAX_JOB_ATTEMPTS", "3"))
+# Run the queue workers inside the web process (simple single-container deploy).
+# Set false when running workers separately with `python -m backend.app.worker`.
+RUN_WORKERS = os.environ.get("RUN_WORKERS", "true").lower() == "true"
+# A claimed job is leased for this long and renewed by a heartbeat while it runs;
+# if its worker dies, the lease expires and another worker picks the job up.
+LEASE_SECONDS = int(os.environ.get("LEASE_SECONDS", "120"))
+HEARTBEAT_SECONDS = int(os.environ.get("HEARTBEAT_SECONDS", "30"))
+# Backpressure: refuse new work (503) once this many jobs are waiting.
+MAX_QUEUE_DEPTH = int(os.environ.get("MAX_QUEUE_DEPTH", "50"))
+# A job that keeps hitting provider quota limits is given up on after this long.
+MAX_JOB_AGE_HOURS = int(os.environ.get("MAX_JOB_AGE_HOURS", "24"))
+# How long a job waits before retrying after the provider says it's out of capacity.
+DEFER_SECONDS = int(os.environ.get("DEFER_SECONDS", "90"))
+
+# --- Provider budgets (Groq free tier: 8,000 tokens/min per LLM model) ---
+# Shared across every process via the database, so N workers together stay
+# under the limit instead of each one assuming it has the whole quota.
+LLM_TOKENS_PER_MINUTE = int(os.environ.get("LLM_TOKENS_PER_MINUTE", "7000"))
+WHISPER_REQUESTS_PER_MINUTE = int(os.environ.get("WHISPER_REQUESTS_PER_MINUTE", "18"))
+PROVIDER_MAX_WAIT_SECONDS = int(os.environ.get("PROVIDER_MAX_WAIT_SECONDS", "240"))
+
+# --- Summarization sizing ---
+# Transcripts up to this many characters are summarized in one call; longer
+# ones are summarized section by section, then merged (each call must fit the
+# per-minute token budget above).
+SINGLE_PASS_CHARS = int(os.environ.get("SINGLE_PASS_CHARS", "10000"))
+SECTION_CHARS = int(os.environ.get("SECTION_CHARS", "10000"))
+SUMMARY_MODEL = os.environ.get("SUMMARY_MODEL", "openai/gpt-oss-120b")
+SECTION_MODEL = os.environ.get("SECTION_MODEL", "openai/gpt-oss-20b")
+QA_MODEL = os.environ.get("QA_MODEL", "openai/gpt-oss-20b")
+# Characters of retrieved transcript sent with a question.
+QA_CONTEXT_CHARS = int(os.environ.get("QA_CONTEXT_CHARS", "12000"))
 # Keep the uploaded audio after processing? Off by default: less storage, better privacy.
 RETAIN_AUDIO = os.environ.get("RETAIN_AUDIO", "false").lower() == "true"
 # Meetings older than this are deleted automatically. 0 disables.

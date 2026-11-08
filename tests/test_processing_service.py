@@ -153,25 +153,25 @@ def _fail_if_called(*args, **kwargs):
     raise AssertionError("should not call the real ASR/LLM while waiting on another in-flight upload")
 
 
-def test_run_waits_for_in_flight_duplicate_then_reuses_its_result(tmp_path, monkeypatch):
+def test_in_flight_duplicate_defers_instead_of_blocking_then_reuses_result(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
-    monkeypatch.setattr(processing_service, "_FOLLOW_POLL_SECONDS", 0.01)
-
     leader = create_meeting("call.mp3", "duphash", "audio/call.mp3")
-    update_status(leader.id, MeetingStatus.PROCESSING)  # still in flight, not COMPLETED yet
+    update_status(leader.id, MeetingStatus.PROCESSING)  # still in flight
     follower = create_meeting("call-copy.mp3", "duphash", "audio/call-copy.mp3")
-
     monkeypatch.setattr(processing_service, "transcribe_file", _fail_if_called)
     monkeypatch.setattr(processing_service, "summarize", _fail_if_called)
 
-    def _complete_leader_shortly():
-        time.sleep(0.05)
-        save_transcript(leader.id, "leader transcript")
-        save_summary(leader.id, "leader summary", ["d1"], [])
-        update_status(leader.id, MeetingStatus.COMPLETED)
+    started = time.monotonic()
+    processing_service.run(follower.id)
+    assert time.monotonic() - started < 1  # returned immediately: no worker thread held
 
-    threading.Thread(target=_complete_leader_shortly).start()
+    waiting = get_meeting(follower.id)
+    assert waiting.status == MeetingStatus.QUEUED
+    assert waiting.stage == "waiting for an identical upload"
 
+    save_transcript(leader.id, "leader transcript")
+    save_summary(leader.id, "leader summary", ["d1"], [])
+    update_status(leader.id, MeetingStatus.COMPLETED)
     processing_service.run(follower.id)
 
     result = get_meeting(follower.id)
@@ -180,36 +180,28 @@ def test_run_waits_for_in_flight_duplicate_then_reuses_its_result(tmp_path, monk
     assert result.summary == "leader summary"
 
 
-def test_run_propagates_failure_from_in_flight_duplicate(tmp_path, monkeypatch):
+def test_an_earlier_failed_upload_does_not_block_reprocessing(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
-    monkeypatch.setattr(processing_service, "_FOLLOW_POLL_SECONDS", 0.01)
+    failed = create_meeting("call.mp3", "duphash", "audio/call.mp3")
+    update_status(failed.id, MeetingStatus.FAILED, error_message="upstream ASR error")
+    retry = create_meeting("call-again.mp3", "duphash", "audio/call-again.mp3")
+    monkeypatch.setattr(
+        processing_service, "transcribe_file",
+        lambda path, **kw: {"text": "hello world, this is the start of the meeting", "segments": [], "duration": 0.0},
+    )
+    monkeypatch.setattr(processing_service, "summarize",
+                        lambda t: {"summary": "fresh", "key_decisions": [], "action_items": []})
 
-    leader = create_meeting("call.mp3", "duphash", "audio/call.mp3")
-    update_status(leader.id, MeetingStatus.PROCESSING)
-    follower = create_meeting("call-copy.mp3", "duphash", "audio/call-copy.mp3")
+    processing_service.run(retry.id)
 
-    monkeypatch.setattr(processing_service, "transcribe_file", _fail_if_called)
-    monkeypatch.setattr(processing_service, "summarize", _fail_if_called)
-
-    def _fail_leader_shortly():
-        time.sleep(0.05)
-        update_status(leader.id, MeetingStatus.FAILED, error_message="upstream ASR error")
-
-    threading.Thread(target=_fail_leader_shortly).start()
-
-    processing_service.run(follower.id)
-
-    result = get_meeting(follower.id)
-    assert result.status == MeetingStatus.FAILED
-    assert "upstream ASR error" in result.error_message
+    assert get_meeting(retry.id).status == MeetingStatus.COMPLETED
+    assert get_meeting(retry.id).summary == "fresh"
 
 
-def test_run_gives_up_and_processes_independently_if_leader_never_resolves(tmp_path, monkeypatch):
-    # Simulates a leader whose process crashed mid-PROCESSING — the follower
-    # shouldn't wait forever for a restart's fail_stuck_processing sweep.
+def test_run_processes_independently_once_it_has_waited_too_long(tmp_path, monkeypatch):
+    # The leader's worker died; the follower shouldn't wait forever.
     _setup_db(tmp_path, monkeypatch)
-    monkeypatch.setattr(processing_service, "_FOLLOW_POLL_SECONDS", 0.01)
-    monkeypatch.setattr(processing_service, "_FOLLOW_MAX_WAIT_SECONDS", 0.03)
+    monkeypatch.setattr(processing_service, "_FOLLOW_MAX_WAIT_SECONDS", 0)
 
     leader = create_meeting("call.mp3", "duphash", "audio/call.mp3")
     update_status(leader.id, MeetingStatus.PROCESSING)  # never resolves
@@ -256,6 +248,9 @@ def test_audio_deleted_after_processing_unless_retained_or_still_needed(tmp_path
     update_status(waiting.id, MeetingStatus.COMPLETED)
     other = fresh("z.mp3")
     update_status(other.id, MeetingStatus.PROCESSING)
+    processing_service.release_audio(get_meeting(other.id))
+    assert audio.exists()  # still processing: may retry, so keep it
+    update_status(other.id, MeetingStatus.COMPLETED)
     update_status(first.id, MeetingStatus.COMPLETED)
     processing_service.release_audio(get_meeting(other.id))
     assert not audio.exists()

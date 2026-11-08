@@ -11,11 +11,11 @@ from fastapi.staticfiles import StaticFiles
 
 from backend.app.api.health import router as health_router
 from backend.app.api.meetings import router as meetings_router
+from backend.app.api.meetings import ask_router, recordings_router
 from backend.app.core import config
 from backend.app.core.logging import configure_logging, get_logger
 from backend.app.database.init_db import init_db
 from backend.app.services.worker import WorkerPool
-from backend.app.database.meetings_repo import requeue_stuck_processing
 
 configure_logging()
 log = get_logger(__name__)
@@ -26,10 +26,9 @@ _FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    requeued, failed = requeue_stuck_processing(config.MAX_JOB_ATTEMPTS)
-    if requeued or failed:
-        log.warning("after restart: re-queued %d interrupted meeting(s), abandoned %d", requeued, failed)
-    app.state.workers = WorkerPool(config.WORKER_CONCURRENCY)
+    # Interrupted jobs need no startup sweep: their leases expire and any
+    # worker (here or in a separate worker process) picks them back up.
+    app.state.workers = WorkerPool(config.WORKER_CONCURRENCY if config.RUN_WORKERS else 0)
     app.state.workers.start()
     if not os.environ.get("GROQ_API_KEY"):
         log.warning(
@@ -77,6 +76,8 @@ if config.ALLOWED_ORIGINS:
 
 app.include_router(health_router)
 app.include_router(meetings_router)
+app.include_router(recordings_router)
+app.include_router(ask_router)
 
 # Mounted last so it never shadows the API routes above — StaticFiles only
 # handles a path once nothing more specific has already matched it.

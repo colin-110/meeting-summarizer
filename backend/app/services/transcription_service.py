@@ -14,7 +14,8 @@ from groq import APIConnectionError, Groq, InternalServerError, RateLimitError
 from backend.app.core import config
 from backend.app.services import audio_service
 from backend.app.services.audio_service import AudioProcessingError
-from backend.app.utils.errors import clean_provider_message
+from backend.app.utils.errors import ProviderBusyError, clean_provider_message, retry_after_seconds
+from backend.app.utils.rate_limit import acquire_budget
 from backend.app.utils.retry import call_with_retry
 
 _MODEL = "whisper-large-v3-turbo"
@@ -73,8 +74,21 @@ def transcribe(audio_path: str, *, client: Optional[Groq] = None) -> dict:
             text = (_field(result, "text", "") or "").strip()
         return {"text": text, "segments": segments}
 
+    # Shared across all workers/processes, so together they stay under the
+    # provider's requests-per-minute limit instead of tripping it.
+    acquire_budget(
+        f"requests:{_MODEL}",
+        1,
+        limit=config.WHISPER_REQUESTS_PER_MINUTE,
+        max_wait_seconds=config.PROVIDER_MAX_WAIT_SECONDS,
+    )
     try:
         return call_with_retry(_call, retry_on=_RETRYABLE)
+    except RateLimitError as exc:
+        raise ProviderBusyError(
+            f"Transcription provider is at capacity: {clean_provider_message(exc)}",
+            retry_after=retry_after_seconds(exc),
+        ) from exc
     except _RETRYABLE as exc:
         raise TranscriptionError(
             f"Transcription service unavailable after retries: {clean_provider_message(exc)}"
@@ -105,17 +119,27 @@ def transcribe_file(
             chunks = audio_service.split_and_compress(audio_path, work_dir)
         except AudioProcessingError as exc:
             raise TranscriptionError(str(exc)) from exc
-
-        stage("transcribing")
-        client = client or Groq()
-        workers = max(1, min(config.TRANSCRIBE_PARALLELISM, len(chunks)))
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            results = list(pool.map(lambda c: transcribe(str(c.path), client=client), chunks))
+        segments, duration = transcribe_chunks(chunks, client=client, on_stage=stage)
     finally:
         audio_service.cleanup(work_dir)
+    text = " ".join(s["text"] for s in segments)
+    return {"text": text.strip(), "segments": segments, "duration": duration}
+
+
+def transcribe_chunks(chunks, *, client=None, on_stage=None) -> tuple[list, float]:
+    """Transcribe already-prepared chunks in parallel; return (absolute segments, duration)."""
+    if on_stage:
+        on_stage("transcribing")
+    client = client or Groq()
+    workers = max(1, min(config.TRANSCRIBE_PARALLELISM, len(chunks)))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        results = list(pool.map(lambda c: transcribe(str(c.path), client=client), chunks))
 
     segments = []
     for chunk, result in zip(chunks, results):
+        if not result["segments"] and result["text"]:
+            # Provider gave text without timing: keep it as one segment at the chunk start.
+            result["segments"] = [{"start": 0.0, "end": 0.0, "text": result["text"]}]
         for seg in result["segments"]:
             segments.append(
                 {
@@ -124,9 +148,4 @@ def transcribe_file(
                     "text": seg["text"],
                 }
             )
-    # Providers that return no segment data still give us text; keep it.
-    text = " ".join(s["text"] for s in segments) if segments else " ".join(
-        r["text"] for r in results if r["text"]
-    )
-    duration = max((s["end"] for s in segments), default=0.0)
-    return {"text": text.strip(), "segments": segments, "duration": duration}
+    return segments, max((s["end"] for s in segments), default=0.0)

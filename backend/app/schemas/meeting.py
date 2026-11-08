@@ -20,6 +20,11 @@ class Segment(BaseModel):
     text: str
 
 
+class Chapter(BaseModel):
+    title: str
+    start: float
+
+
 class MeetingSummaryOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -40,7 +45,9 @@ class MeetingDetailOut(MeetingSummaryOut):
     action_items: list[ActionItem] = []
     open_questions: list[str] = []
     segments: list[Segment] = []
+    chapters: list[Chapter] = []
     audio_seconds: Optional[float] = None
+    source: str = "upload"
     error_message: Optional[str] = None
     processing_started_at: Optional[str] = None
     processing_completed_at: Optional[str] = None
@@ -59,5 +66,18 @@ class AskIn(BaseModel):
     question: str = Field(min_length=3, max_length=500)
 
 
+class Source(BaseModel):
+    tag: str
+    meeting_id: str
+    title: Optional[str] = None
+    start: float
+
+
 class AskOut(BaseModel):
     answer: str
+    sources: list[Source] = []
+
+
+class ChunkOut(BaseModel):
+    seq: int
+    transcribed: bool

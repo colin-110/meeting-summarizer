@@ -11,6 +11,7 @@ class MeetingStatus(StrEnum):
     PROCESSING = "PROCESSING"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
+    RECORDING = "RECORDING"
 
 
 @dataclass
@@ -36,3 +37,6 @@ class Meeting:
     segments: list = field(default_factory=list)
     attempts: int = 0
     audio_seconds: Optional[float] = None
+    chapters: list = field(default_factory=list)
+    notes_cache: dict = field(default_factory=dict)
+    source: str = "upload"
