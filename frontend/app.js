@@ -1,6 +1,5 @@
-// The API serves this frontend, so every call is same-origin. If you host
-// the frontend separately, set this to the API's URL (and ALLOWED_ORIGINS on the server).
-const API_ORIGIN = "";
+// Set in config.js: empty when the API serves this page itself.
+const API_ORIGIN = window.API_ORIGIN || "";
 const API_BASE = `${API_ORIGIN}/api/v1/meetings`;
 const POLL_INTERVAL_MS = 2000;
 const PAGE_SIZE = 20;

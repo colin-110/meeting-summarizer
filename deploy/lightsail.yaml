@@ -1,0 +1,65 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Meeting Summarizer on one Lightsail instance (USD 5/month plan) with a static IP.
+
+Parameters:
+  InstanceName:
+    Type: String
+    Default: meeting-summarizer
+  BundleId:
+    Type: String
+    Default: nano_3_1
+    Description: nano_3_1 = 512 MB / 2 vCPU / 20 GB, USD 5 a month including a public IPv4.
+  AvailabilityZone:
+    Type: String
+    Default: ap-south-1a
+  KeyPairName:
+    Type: String
+    Description: Lightsail key pair (import your public key first).
+  SshCidr:
+    Type: String
+    Description: Your IP for SSH, e.g. 203.0.113.7/32. The Lightsail browser SSH is always allowed.
+
+Resources:
+  Instance:
+    Type: AWS::Lightsail::Instance
+    Properties:
+      InstanceName: !Ref InstanceName
+      AvailabilityZone: !Ref AvailabilityZone
+      BlueprintId: ubuntu_24_04
+      BundleId: !Ref BundleId
+      KeyPairName: !Ref KeyPairName
+      Networking:
+        Ports:
+          - Protocol: tcp
+            FromPort: 22
+            ToPort: 22
+            Cidrs: [!Ref SshCidr]
+            CidrListAliases: [lightsail-connect]
+          - Protocol: tcp
+            FromPort: 80
+            ToPort: 80
+            Cidrs: [0.0.0.0/0]
+            Ipv6Cidrs: ["::/0"]
+          - Protocol: tcp
+            FromPort: 443
+            ToPort: 443
+            Cidrs: [0.0.0.0/0]
+            Ipv6Cidrs: ["::/0"]
+      Tags:
+        - Key: project
+          Value: meeting-summarizer
+
+  StaticIp:
+    Type: AWS::Lightsail::StaticIp
+    Properties:
+      StaticIpName: !Sub "${InstanceName}-ip"
+      AttachedTo: !Ref Instance
+
+Outputs:
+  PublicIp:
+    Value: !GetAtt StaticIp.IpAddress
+  ApiUrl:
+    Description: HTTPS address of the API (sslip.io maps the name to the IP, no domain needed).
+    Value: !Sub
+      - "https://${Dashed}.sslip.io"
+      - Dashed: !Join ["-", !Split [".", !GetAtt StaticIp.IpAddress]]

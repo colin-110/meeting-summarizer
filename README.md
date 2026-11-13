@@ -76,11 +76,26 @@ pytest -v
 
 To run workers as their own processes: start the API with `RUN_WORKERS=false`, then run `python -m backend.app.worker` once per worker process.
 
+## Deployment
+
+The API runs on one AWS Lightsail instance (USD 5/month: 512 MB RAM, 2 vCPU, 20 GB), the frontend on Vercel.
+
+- `deploy/lightsail.yaml` — CloudFormation: the instance, a static IP, and a firewall that only opens 80/443 (SSH only from one IP).
+- `deploy/setup.sh` — installs or updates the app on Ubuntu: Python venv, systemd service, Caddy for automatic HTTPS on an `sslip.io` name (no domain needed), 1 GB swap. Re-run it to deploy a new version.
+- The Groq key lives in `/etc/meeting-summarizer/secrets.env` on the server, never in the repo.
+- `frontend/config.js` points the Vercel copy at the API; `ALLOWED_ORIGINS` on the server allows only that origin.
+
+Sized from measurements, not guesses: running locally with the server's settings, an 11-minute and a 48-minute recording peaked at 113 MB RAM and used 31 CPU-seconds in total; on the live server the app peaks around 95 MB. The bottleneck is Groq's free token limit, not the machine.
+
+~~~bash
+aws cloudformation deploy --region ap-south-1 --stack-name meeting-summarizer \
+  --template-file deploy/lightsail.yaml \
+  --parameter-overrides KeyPairName=<lightsail-key> SshCidr=<your-ip>/32
+scp deploy/setup.sh ubuntu@<ip>:/tmp/ && ssh ubuntu@<ip> 'sudo bash /tmp/setup.sh <ip-with-dashes>.sslip.io https://<app>.vercel.app'
+~~~
+
 ## Build next
 
-Deployment isn't included. Ideas to build on top:
-
-- **Deploy it.** Write a Dockerfile, and run the API and workers as separate containers sharing the data volume behind an HTTPS reverse proxy. Set `RUN_WORKERS=false` on the API and `TRUST_PROXY_HEADERS=true` behind the proxy.
 - **Push status instead of polling.** Server-Sent Events from `/status`, so the UI updates the moment a stage changes.
 - **Postgres.** Port the queue (`claim_next` → `SELECT … FOR UPDATE SKIP LOCKED`) and FTS5 search (→ `tsvector`) to run on more than one machine.
 - **Calendar export.** Turn action items with deadlines into an `.ics` file.
@@ -96,4 +111,4 @@ Deployment isn't included. Ideas to build on top:
 
 ## Tech stack
 
-Python 3.12 · FastAPI · SQLite (WAL, FTS5) · ffmpeg · Groq Whisper and gpt-oss · plain HTML/CSS/JS · Pytest · GitHub Actions · Prometheus metrics
+Python 3.12 · FastAPI · SQLite (WAL, FTS5) · ffmpeg · Groq Whisper and gpt-oss · plain HTML/CSS/JS · Pytest · GitHub Actions · Prometheus metrics · AWS Lightsail + CloudFormation · Caddy · Vercel
