@@ -2,7 +2,9 @@
 
 Upload or record a meeting and get a timestamped transcript, a summary, decisions, action items and open questions — then search across all your meetings or ask questions about one.
 
-Runs on free tiers only: Groq (Whisper + gpt-oss) for AI, SQLite for storage.
+**Live app: https://meeting-summarizer-recorder.vercel.app**
+
+AI runs on Groq's free tier (Whisper + gpt-oss). The frontend is on Vercel; the API, workers and SQLite database run on one USD 5/month AWS Lightsail server.
 
 ## Features
 
@@ -51,7 +53,7 @@ Browser ─► web (N procs) ─►│ jobs · results · FTS5 · budgets · cac
 - **Usage metering.** Every job records the audio it sent and the tokens it spent, per model, and the UI shows it.
 - **Hallucination filter.** Whisper invents phrases over silence; segments with high no-speech probability and low confidence are dropped.
 
-**Why no Kafka/Redis/Celery/Postgres:** one database already gives a durable queue, locking, rate limits, caching and search at this scale. Every extra service costs memory on a small free-tier VM and adds a failure mode. Postgres becomes worth it when the app needs more than one machine; the queue design (leases + `SKIP LOCKED`-style claiming) carries over directly.
+**Why no Kafka/Redis/Celery/Postgres:** one database already gives a durable queue, locking, rate limits, caching and search at this scale. Every extra service costs memory on a small VM and adds a failure mode. Postgres becomes worth it when the app needs more than one machine; the queue design (leases + `SKIP LOCKED`-style claiming) carries over directly.
 
 **Privacy and cost:** meetings are private to a browser token (only its hash is stored); audio is deleted after processing; meetings and cached answers auto-delete after 30 days. `X-Forwarded-For` is ignored unless `TRUST_PROXY_HEADERS=true`, so clients can't dodge the per-IP limits.
 
@@ -78,21 +80,32 @@ To run workers as their own processes: start the API with `RUN_WORKERS=false`, t
 
 ## Deployment
 
-The API runs on one AWS Lightsail instance (USD 5/month: 512 MB RAM, 2 vCPU, 20 GB), the frontend on Vercel.
+~~~text
+Browser ─► Vercel (static frontend)
+   │
+   └─ API calls ─► Lightsail, Mumbai (USD 5/month: 512 MB RAM, 2 vCPU, 20 GB)
+                     Caddy (HTTPS) ─► uvicorn: API + worker ─► SQLite on disk
+~~~
 
-- `deploy/lightsail.yaml` — CloudFormation: the instance, a static IP, and a firewall that only opens 80/443 (SSH only from one IP).
-- `deploy/setup.sh` — installs or updates the app on Ubuntu: Python venv, systemd service, Caddy for automatic HTTPS on an `sslip.io` name (no domain needed), 1 GB swap. Re-run it to deploy a new version.
-- The Groq key lives in `/etc/meeting-summarizer/secrets.env` on the server, never in the repo.
-- `frontend/config.js` points the Vercel copy at the API; `ALLOWED_ORIGINS` on the server allows only that origin.
+- **Frontend:** Vercel serves `frontend/` and redeploys on every push to `main`. `frontend/config.js` points it at the API, and the server's `ALLOWED_ORIGINS` accepts only that origin.
+- **Server:** `deploy/lightsail.yaml` (CloudFormation) creates the instance, a static IP, and a firewall that opens only 80/443 to everyone and SSH to one IP.
+- **App:** `deploy/setup.sh` installs it on Ubuntu as a systemd service with Caddy for automatic HTTPS on an `sslip.io` name (no domain to buy) and 1 GB swap. It is safe to re-run; that's how a new version is deployed.
+- **Secrets:** the Groq key lives only in `/etc/meeting-summarizer/secrets.env` on the server.
 
-Sized from measurements, not guesses: running locally with the server's settings, an 11-minute and a 48-minute recording peaked at 113 MB RAM and used 31 CPU-seconds in total; on the live server the app peaks around 95 MB. The bottleneck is Groq's free token limit, not the machine.
+**Sized from measurements, not guesses.** Run locally with the server's settings, an 11-minute and a 48-minute recording peaked at 113 MB RAM and used 31 CPU-seconds in total; a 3-hour file's ffmpeg pass peaked at 37 MB. On the live server the app peaks around 95 MB and an 11-minute meeting is done in 13 s. Groq's free token limit runs out long before the USD 5 machine does.
+
+Create the server and install the app:
 
 ~~~bash
 aws cloudformation deploy --region ap-south-1 --stack-name meeting-summarizer \
   --template-file deploy/lightsail.yaml \
   --parameter-overrides KeyPairName=<lightsail-key> SshCidr=<your-ip>/32
-scp deploy/setup.sh ubuntu@<ip>:/tmp/ && ssh ubuntu@<ip> 'sudo bash /tmp/setup.sh <ip-with-dashes>.sslip.io https://<app>.vercel.app'
+scp deploy/setup.sh ubuntu@<ip>:/tmp/
+ssh ubuntu@<ip> 'sudo bash /tmp/setup.sh <ip-with-dashes>.sslip.io https://<app>.vercel.app'
+ssh ubuntu@<ip> 'echo "GROQ_API_KEY=..." | sudo tee /etc/meeting-summarizer/secrets.env >/dev/null && sudo systemctl restart meeting-summarizer'
 ~~~
+
+Deploy a new version: push to `main`, then re-run the `setup.sh` line.
 
 ## Build next
 

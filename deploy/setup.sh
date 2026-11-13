@@ -2,7 +2,7 @@
 # Install or update the app on a fresh Ubuntu 24.04 server. Safe to re-run.
 #
 #   sudo bash setup.sh <domain> <allowed-origin>
-#   e.g. sudo bash setup.sh 13-200-1-2.sslip.io https://meeting-summarizer.vercel.app
+#   e.g. sudo bash setup.sh 3-7-91-183.sslip.io https://meeting-summarizer-recorder.vercel.app
 #
 # The Groq key lives in /etc/meeting-summarizer/secrets.env (GROQ_API_KEY=...),
 # which this script never touches.
