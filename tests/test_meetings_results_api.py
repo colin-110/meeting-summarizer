@@ -1,15 +1,15 @@
 import hashlib
 
-TOKEN = "t" * 32
-HEADERS = {"X-Owner-Token": TOKEN}
-OWNER = hashlib.sha256(TOKEN.encode()).hexdigest()
-
 from fastapi.testclient import TestClient
 
 from backend.app.core import config
 from backend.app.database.init_db import init_db
 from backend.app.database.meetings_repo import create_meeting, save_summary, save_transcript, update_status
 from backend.app.models.meeting import MeetingStatus
+
+TOKEN = "t" * 32
+HEADERS = {"X-Owner-Token": TOKEN}
+OWNER = hashlib.sha256(TOKEN.encode()).hexdigest()
 
 
 def _app(tmp_path, monkeypatch):
@@ -29,7 +29,9 @@ def _seed_completed_meeting(tmp_path, monkeypatch):
 
     meeting = create_meeting("standup.mp3", "hash1", "audio/standup.mp3", owner_id=OWNER)
     save_transcript(meeting.id, "hello team")
-    save_summary(meeting.id, "Quick sync.", ["Ship Friday"], [{"task": "Write notes", "assignee": "Sam", "deadline": None}])
+    save_summary(
+        meeting.id, "Quick sync.", ["Ship Friday"], [{"task": "Write notes", "assignee": "Sam", "deadline": None}]
+    )
     update_status(meeting.id, MeetingStatus.COMPLETED)
     return meeting.id
 

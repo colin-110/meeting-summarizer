@@ -2,7 +2,6 @@
 
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Optional
 
 
 class MeetingStatus(StrEnum):
@@ -21,22 +20,22 @@ class Meeting:
     file_hash: str
     audio_path: str
     status: str
-    transcript: Optional[str] = None
-    title: Optional[str] = None
-    summary: Optional[str] = None
+    transcript: str | None = None
+    title: str | None = None
+    summary: str | None = None
     key_decisions: list = field(default_factory=list)
     action_items: list = field(default_factory=list)
     open_questions: list = field(default_factory=list)
-    error_message: Optional[str] = None
+    error_message: str | None = None
     created_at: str = ""
     updated_at: str = ""
-    processing_started_at: Optional[str] = None
-    processing_completed_at: Optional[str] = None
+    processing_started_at: str | None = None
+    processing_completed_at: str | None = None
     owner_id: str = ""
-    stage: Optional[str] = None
+    stage: str | None = None
     segments: list = field(default_factory=list)
     attempts: int = 0
-    audio_seconds: Optional[float] = None
+    audio_seconds: float | None = None
     chapters: list = field(default_factory=list)
     notes_cache: dict = field(default_factory=dict)
     source: str = "upload"

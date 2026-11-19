@@ -58,8 +58,7 @@ def _validate_signature(head: bytes, ext: str) -> None:
         if head[offset : offset + len(magic)] == magic:
             return
     raise UploadValidationError(
-        f"File content doesn't look like a valid {ext} file "
-        "— the extension may not match the actual format."
+        f"File content doesn't look like a valid {ext} file — the extension may not match the actual format."
     )
 
 
@@ -86,9 +85,7 @@ def save_upload(upload: UploadFile) -> tuple[str, str, str]:
             while chunk := upload.file.read(_CHUNK_SIZE):
                 total_bytes += len(chunk)
                 if total_bytes > max_bytes:
-                    raise UploadValidationError(
-                        f"File exceeds the {config.MAX_UPLOAD_MB}MB upload limit."
-                    )
+                    raise UploadValidationError(f"File exceeds the {config.MAX_UPLOAD_MB}MB upload limit.")
                 if len(head) < 16:
                     head += chunk[: 16 - len(head)]
                 digest.update(chunk)

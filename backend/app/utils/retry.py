@@ -7,7 +7,8 @@ just add latency before the same error surfaces anyway.
 """
 
 import time
-from typing import Callable, TypeVar
+from collections.abc import Callable
+from typing import TypeVar
 
 T = TypeVar("T")
 

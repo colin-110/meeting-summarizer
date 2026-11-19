@@ -3,15 +3,13 @@ dataclass so the DB representation (JSON-as-TEXT columns) and the wire
 representation (nested objects) don't have to be the same shape.
 """
 
-from typing import Optional
-
 from pydantic import BaseModel, ConfigDict, Field
 
 
 class ActionItem(BaseModel):
     task: str
-    assignee: Optional[str] = None
-    deadline: Optional[str] = None
+    assignee: str | None = None
+    deadline: str | None = None
 
 
 class Segment(BaseModel):
@@ -30,28 +28,28 @@ class MeetingSummaryOut(BaseModel):
 
     id: str
     filename: str
-    title: Optional[str] = None
+    title: str | None = None
     status: str
-    stage: Optional[str] = None
+    stage: str | None = None
     created_at: str
     updated_at: str
-    snippet: Optional[str] = None
+    snippet: str | None = None
 
 
 class MeetingDetailOut(MeetingSummaryOut):
-    transcript: Optional[str] = None
-    summary: Optional[str] = None
+    transcript: str | None = None
+    summary: str | None = None
     key_decisions: list[str] = []
     action_items: list[ActionItem] = []
     open_questions: list[str] = []
     segments: list[Segment] = []
     chapters: list[Chapter] = []
-    audio_seconds: Optional[float] = None
+    audio_seconds: float | None = None
     source: str = "upload"
     usage: dict = {}
-    error_message: Optional[str] = None
-    processing_started_at: Optional[str] = None
-    processing_completed_at: Optional[str] = None
+    error_message: str | None = None
+    processing_started_at: str | None = None
+    processing_completed_at: str | None = None
 
 
 class MeetingStatusOut(BaseModel):
@@ -59,8 +57,8 @@ class MeetingStatusOut(BaseModel):
 
     id: str
     status: str
-    stage: Optional[str] = None
-    error_message: Optional[str] = None
+    stage: str | None = None
+    error_message: str | None = None
 
 
 class AskIn(BaseModel):
@@ -70,7 +68,7 @@ class AskIn(BaseModel):
 class Source(BaseModel):
     tag: str
     meeting_id: str
-    title: Optional[str] = None
+    title: str | None = None
     start: float
 
 

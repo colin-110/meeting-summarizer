@@ -5,11 +5,11 @@ running wraps its work in `with metering() as meter:` and saves the totals.
 A context variable keeps concurrent jobs (worker threads) from mixing counts.
 """
 
+from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Iterator, Optional
 
-_meter: ContextVar[Optional[dict]] = ContextVar("usage_meter", default=None)
+_meter: ContextVar[dict | None] = ContextVar("usage_meter", default=None)
 
 
 def new_usage() -> dict:

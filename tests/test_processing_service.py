@@ -23,7 +23,11 @@ def test_run_happy_path_marks_completed(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
     meeting = create_meeting("call.mp3", "hash1", "audio/call.mp3")
 
-    monkeypatch.setattr(processing_service, "transcribe_file", lambda path, **kw: {"text": "hello world, this is the start of the meeting", "segments": [], "duration": 0.0})
+    monkeypatch.setattr(
+        processing_service,
+        "transcribe_file",
+        lambda path, **kw: {"text": "hello world, this is the start of the meeting", "segments": [], "duration": 0.0},
+    )
     monkeypatch.setattr(
         processing_service,
         "summarize",
@@ -43,7 +47,11 @@ def test_run_happy_path_persists_title_and_open_questions(tmp_path, monkeypatch)
     _setup_db(tmp_path, monkeypatch)
     meeting = create_meeting("call.mp3", "hash1", "audio/call.mp3")
 
-    monkeypatch.setattr(processing_service, "transcribe_file", lambda path, **kw: {"text": "hello world, this is the start of the meeting", "segments": [], "duration": 0.0})
+    monkeypatch.setattr(
+        processing_service,
+        "transcribe_file",
+        lambda path, **kw: {"text": "hello world, this is the start of the meeting", "segments": [], "duration": 0.0},
+    )
     monkeypatch.setattr(
         processing_service,
         "summarize",
@@ -95,7 +103,11 @@ def test_run_marks_failed_on_too_short_transcript(tmp_path, monkeypatch):
 
     summarize_called = {"value": False}
 
-    monkeypatch.setattr(processing_service, "transcribe_file", lambda path, **kw: {"text": " Thank you.", "segments": [], "duration": 0.0})
+    monkeypatch.setattr(
+        processing_service,
+        "transcribe_file",
+        lambda path, **kw: {"text": " Thank you.", "segments": [], "duration": 0.0},
+    )
     monkeypatch.setattr(processing_service, "summarize", lambda transcript: summarize_called.update(value=True))
 
     processing_service.run(meeting.id)
@@ -114,7 +126,11 @@ def test_run_marks_failed_on_summarization_error(tmp_path, monkeypatch):
     def _boom(transcript):
         raise processing_service.SummarizationError("malformed response")
 
-    monkeypatch.setattr(processing_service, "transcribe_file", lambda path, **kw: {"text": "hello world, this is the start of the meeting", "segments": [], "duration": 0.0})
+    monkeypatch.setattr(
+        processing_service,
+        "transcribe_file",
+        lambda path, **kw: {"text": "hello world, this is the start of the meeting", "segments": [], "duration": 0.0},
+    )
     monkeypatch.setattr(processing_service, "summarize", _boom)
 
     processing_service.run(meeting.id)
@@ -185,11 +201,13 @@ def test_an_earlier_failed_upload_does_not_block_reprocessing(tmp_path, monkeypa
     update_status(failed.id, MeetingStatus.FAILED, error_message="upstream ASR error")
     retry = create_meeting("call-again.mp3", "duphash", "audio/call-again.mp3")
     monkeypatch.setattr(
-        processing_service, "transcribe_file",
+        processing_service,
+        "transcribe_file",
         lambda path, **kw: {"text": "hello world, this is the start of the meeting", "segments": [], "duration": 0.0},
     )
-    monkeypatch.setattr(processing_service, "summarize",
-                        lambda t: {"summary": "fresh", "key_decisions": [], "action_items": []})
+    monkeypatch.setattr(
+        processing_service, "summarize", lambda t: {"summary": "fresh", "key_decisions": [], "action_items": []}
+    )
 
     processing_service.run(retry.id)
 
@@ -207,7 +225,9 @@ def test_run_processes_independently_once_it_has_waited_too_long(tmp_path, monke
     follower = create_meeting("call-copy.mp3", "duphash", "audio/call-copy.mp3")
 
     monkeypatch.setattr(
-        processing_service, "transcribe_file", lambda path, **kw: {"text": "hello world, this is the start of the meeting", "segments": [], "duration": 0.0}
+        processing_service,
+        "transcribe_file",
+        lambda path, **kw: {"text": "hello world, this is the start of the meeting", "segments": [], "duration": 0.0},
     )
     monkeypatch.setattr(
         processing_service,
@@ -233,8 +253,11 @@ def test_audio_deleted_after_processing_unless_retained_or_still_needed(tmp_path
 
     done = {"text": "hello world, this is the start of the meeting", "segments": [], "duration": 0.0}
     monkeypatch.setattr(processing_service, "transcribe_file", lambda path, **kw: done)
-    monkeypatch.setattr(processing_service, "summarize", lambda t: {
-        "title": "T", "summary": "s", "key_decisions": [], "action_items": [], "open_questions": []})
+    monkeypatch.setattr(
+        processing_service,
+        "summarize",
+        lambda t: {"title": "T", "summary": "s", "key_decisions": [], "action_items": [], "open_questions": []},
+    )
 
     # Another upload of the same audio is still waiting -> keep the file for it.
     first = fresh()
@@ -274,8 +297,11 @@ def test_run_saves_segments_and_reports_stages(tmp_path, monkeypatch):
 
     monkeypatch.setattr(processing_service, "transcribe_file", fake_transcribe)
     monkeypatch.setattr(processing_service, "set_stage", lambda mid, stage: stages.append(stage))
-    monkeypatch.setattr(processing_service, "summarize", lambda t: {
-        "title": "T", "summary": "s", "key_decisions": [], "action_items": [], "open_questions": []})
+    monkeypatch.setattr(
+        processing_service,
+        "summarize",
+        lambda t: {"title": "T", "summary": "s", "key_decisions": [], "action_items": [], "open_questions": []},
+    )
 
     processing_service.run(meeting.id)
 
@@ -295,7 +321,9 @@ def test_duplicate_upload_copies_segments_too(tmp_path, monkeypatch):
     update_status(leader.id, MeetingStatus.COMPLETED)
 
     follower = create_meeting("b.mp3", "dup", "audio/b.mp3")
-    monkeypatch.setattr(processing_service, "transcribe_file", lambda *a, **k: (_ for _ in ()).throw(AssertionError("reprocessed")))
+    monkeypatch.setattr(
+        processing_service, "transcribe_file", lambda *a, **k: (_ for _ in ()).throw(AssertionError("reprocessed"))
+    )
     processing_service.run(follower.id)
 
     copied = get_meeting(follower.id)

@@ -1,15 +1,15 @@
-import io
 import hashlib
-
-TOKEN = "t" * 32
-HEADERS = {"X-Owner-Token": TOKEN}
-OWNER = hashlib.sha256(TOKEN.encode()).hexdigest()
+import io
 
 from fastapi.testclient import TestClient
 
 from backend.app.api import meetings as meetings_api
 from backend.app.core import config
 from backend.app.models.meeting import MeetingStatus
+
+TOKEN = "t" * 32
+HEADERS = {"X-Owner-Token": TOKEN}
+OWNER = hashlib.sha256(TOKEN.encode()).hexdigest()
 
 
 def _app(tmp_path, monkeypatch):

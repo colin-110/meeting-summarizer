@@ -10,7 +10,6 @@ is, and lets one question span all of a user's meetings.
 
 import hashlib
 import re
-from typing import Optional
 
 from groq import APIConnectionError, Groq, InternalServerError, RateLimitError
 
@@ -23,13 +22,118 @@ from backend.app.utils.retry import call_with_retry
 
 _RETRYABLE: tuple[type[BaseException], ...] = (APIConnectionError, InternalServerError)
 
-_STOPWORDS = set("""
-a an the and or but if of to in on at for with about from by as is are was were be been being do does did
-what which who whom whose when where why how this that these those it its they them their we us our you your
-i me my he him his she her hers can could would should will shall may might must have has had not no any some
-all there here than then so such into over under again more most other only own same too very just also
-meeting meetings said say says tell told talk talked discuss discussed
-""".split())
+_STOPWORDS = set(
+    [
+        "a",
+        "an",
+        "the",
+        "and",
+        "or",
+        "but",
+        "if",
+        "of",
+        "to",
+        "in",
+        "on",
+        "at",
+        "for",
+        "with",
+        "about",
+        "from",
+        "by",
+        "as",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "do",
+        "does",
+        "did",
+        "what",
+        "which",
+        "who",
+        "whom",
+        "whose",
+        "when",
+        "where",
+        "why",
+        "how",
+        "this",
+        "that",
+        "these",
+        "those",
+        "it",
+        "its",
+        "they",
+        "them",
+        "their",
+        "we",
+        "us",
+        "our",
+        "you",
+        "your",
+        "i",
+        "me",
+        "my",
+        "he",
+        "him",
+        "his",
+        "she",
+        "her",
+        "hers",
+        "can",
+        "could",
+        "would",
+        "should",
+        "will",
+        "shall",
+        "may",
+        "might",
+        "must",
+        "have",
+        "has",
+        "had",
+        "not",
+        "no",
+        "any",
+        "some",
+        "all",
+        "there",
+        "here",
+        "than",
+        "then",
+        "so",
+        "such",
+        "into",
+        "over",
+        "under",
+        "again",
+        "more",
+        "most",
+        "other",
+        "only",
+        "own",
+        "same",
+        "too",
+        "very",
+        "just",
+        "also",
+        "meeting",
+        "meetings",
+        "said",
+        "say",
+        "says",
+        "tell",
+        "told",
+        "talk",
+        "talked",
+        "discuss",
+        "discussed",
+    ]
+)
 
 _SYSTEM_PROMPT = """You answer questions about meetings using only the excerpts provided. Each excerpt line starts with its source tag, like [M1 03:15], meaning meeting M1 at 3 minutes 15 seconds; meeting notes are tagged [M1 notes]. Rules:
 1. Use only the excerpts. If they don't contain the answer, say you couldn't find it in the meetings — never guess or use outside knowledge.
@@ -73,15 +177,19 @@ def _notes_block(tag: str, meeting: Meeting) -> str:
     if meeting.key_decisions:
         parts.append(f"[{tag} notes] Decisions: " + "; ".join(meeting.key_decisions))
     if meeting.action_items:
-        parts.append(f"[{tag} notes] Action items: " + "; ".join(
-            f"{a['task']} (owner: {a.get('assignee') or 'none'}, due: {a.get('deadline') or 'none'})"
-            for a in meeting.action_items))
+        parts.append(
+            f"[{tag} notes] Action items: "
+            + "; ".join(
+                f"{a['task']} (owner: {a.get('assignee') or 'none'}, due: {a.get('deadline') or 'none'})"
+                for a in meeting.action_items
+            )
+        )
     if meeting.open_questions:
         parts.append(f"[{tag} notes] Open questions: " + "; ".join(meeting.open_questions))
     return "\n".join(parts)
 
 
-def build_context(owner_id: str, question: str, meeting_id: Optional[str] = None) -> tuple[str, list[dict]]:
+def build_context(owner_id: str, question: str, meeting_id: str | None = None) -> tuple[str, list[dict]]:
     """Return (context text, sources). Sources: [{tag, meeting_id, title, start}]."""
     budget = config.QA_CONTEXT_CHARS
     hits = search_segments(owner_id, keywords(question), limit=40, meeting_id=meeting_id)
@@ -92,7 +200,7 @@ def build_context(owner_id: str, question: str, meeting_id: Optional[str] = None
     blocks: list[str] = []
     used = 0
 
-    def tag_for(mid: str) -> Optional[str]:
+    def tag_for(mid: str) -> str | None:
         if mid not in meetings:
             m = get_meeting(mid)
             if m is None:
@@ -108,7 +216,8 @@ def build_context(owner_id: str, question: str, meeting_id: Optional[str] = None
         if whole and len(timestamped_transcript(whole)) <= budget:
             # Short meeting: the whole transcript fits, so send all of it.
             lines = [f"[M1 {fmt_time(s['start'])}] {s['text']}" for s in whole.segments] or [
-                f"[M1 00:00] {whole.transcript or ''}"]
+                f"[M1 00:00] {whole.transcript or ''}"
+            ]
             sources.append({"tag": "M1", "meeting_id": meeting_id, "title": whole.title, "start": 0.0})
             return "\n".join(blocks + lines), sources
 
@@ -127,12 +236,18 @@ def build_context(owner_id: str, question: str, meeting_id: Optional[str] = None
         used += cost
         seen.update((hit["meeting_id"], j) for j in window)
         blocks.extend(lines)
-        sources.append({"tag": tag, "meeting_id": hit["meeting_id"],
-                        "title": meetings[hit["meeting_id"]].title, "start": float(hit["start"])})
+        sources.append(
+            {
+                "tag": tag,
+                "meeting_id": hit["meeting_id"],
+                "title": meetings[hit["meeting_id"]].title,
+                "start": float(hit["start"]),
+            }
+        )
     return "\n".join(blocks), sources
 
 
-def answer(context: str, question: str, *, client: Optional[Groq] = None) -> str:
+def answer(context: str, question: str, *, client: Groq | None = None) -> str:
     if not context.strip():
         raise QAError("No meetings matched that question. Try different words.")
     max_tokens = 1200
@@ -144,8 +259,11 @@ def answer(context: str, question: str, *, client: Optional[Groq] = None) -> str
         models.append(config.SUMMARY_MODEL)
     try:
         i, reservation = acquire_first_available(
-            [f"tokens:{m}" for m in models], estimate, limit=config.LLM_TOKENS_PER_MINUTE,
-            first_wait_seconds=min(config.FALLBACK_AFTER_SECONDS, 5), max_wait_seconds=15,
+            [f"tokens:{m}" for m in models],
+            estimate,
+            limit=config.LLM_TOKENS_PER_MINUTE,
+            first_wait_seconds=min(config.FALLBACK_AFTER_SECONDS, 5),
+            max_wait_seconds=15,
         )
     except ProviderBusyError as exc:
         raise QABusyError("The AI is busy right now — try again in a minute.", exc.retry_after) from exc
@@ -189,8 +307,9 @@ def _cache_key(owner_id: str, question: str, context: str) -> str:
     return hashlib.sha256("\0".join((config.QA_MODEL, owner_id, normalized, context)).encode()).hexdigest()
 
 
-def _answer_cached(owner_id: str, meeting_id: Optional[str], question: str, context: str, sources: list,
-                   client: Optional[Groq]) -> dict:
+def _answer_cached(
+    owner_id: str, meeting_id: str | None, question: str, context: str, sources: list, client: Groq | None
+) -> dict:
     key = _cache_key(owner_id, question, context)
     hit = cached_answer(key)
     if hit is not None:
@@ -200,7 +319,7 @@ def _answer_cached(owner_id: str, meeting_id: Optional[str], question: str, cont
     return {"answer": text, "sources": sources, "cached": False}
 
 
-def ask(meeting: Meeting, question: str, *, client: Optional[Groq] = None) -> dict:
+def ask(meeting: Meeting, question: str, *, client: Groq | None = None) -> dict:
     """Answer about one meeting. Returns {"answer", "sources", "cached"}."""
     if not (meeting.segments or meeting.transcript):
         raise QAError("This meeting has no transcript to answer from.")
@@ -208,7 +327,7 @@ def ask(meeting: Meeting, question: str, *, client: Optional[Groq] = None) -> di
     return _answer_cached(meeting.owner_id, meeting.id, question, context, sources, client)
 
 
-def ask_all(owner_id: str, question: str, *, client: Optional[Groq] = None) -> dict:
+def ask_all(owner_id: str, question: str, *, client: Groq | None = None) -> dict:
     """Answer across all of one owner's meetings. Returns {"answer", "sources", "cached"}."""
     context, sources = build_context(owner_id, question)
     if not sources:

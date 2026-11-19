@@ -2,8 +2,7 @@ import hashlib
 import re
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 from fastapi import (
     APIRouter,
@@ -20,8 +19,8 @@ from fastapi import (
 )
 from fastapi.responses import PlainTextResponse
 
-from backend.app.core.logging import get_logger
 from backend.app.core import config
+from backend.app.core.logging import get_logger
 from backend.app.database.meetings_repo import (
     add_recording_chunk,
     create_meeting,
@@ -66,7 +65,7 @@ _CHUNK_RATE_WINDOW_SECONDS = 600
 _TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{16,128}$")
 
 
-def owner_id(x_owner_token: Optional[str] = Header(default=None)) -> str:
+def owner_id(x_owner_token: str | None = Header(default=None)) -> str:
     """Identify the caller by a random token the browser generates once and
     keeps in localStorage. Meetings are only visible to the token that made
     them — private-by-default without needing accounts. Only a hash of the
@@ -101,12 +100,12 @@ def _check_owner_backlog(owner: str) -> None:
         raise HTTPException(
             status_code=429,
             detail=f"You already have {config.MAX_QUEUED_PER_OWNER} meetings processing. "
-                   "Wait for one to finish, then upload the next.",
+            "Wait for one to finish, then upload the next.",
             headers={"Retry-After": "60"},
         )
 
 
-def _conditional(meeting_id: str, owner: str, request: Request, response: Response) -> Optional[Response]:
+def _conditional(meeting_id: str, owner: str, request: Request, response: Response) -> Response | None:
     """ETag support for the endpoints the UI polls. The version check reads
     four small columns, so an unchanged meeting is answered with 304 without
     loading or sending its transcript. Browsers revalidate automatically
@@ -172,7 +171,7 @@ def upload_meeting(request: Request, audio: UploadFile = File(...), owner: str =
 @router.get("", response_model=list[MeetingSummaryOut])
 def get_meetings(
     owner: str = Depends(owner_id),
-    q: Optional[str] = Query(default=None, max_length=200, description="Full-text search"),
+    q: str | None = Query(default=None, max_length=200, description="Full-text search"),
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
 ) -> list:
@@ -227,13 +226,15 @@ def _qa_errors():
     try:
         yield
     except qa_service.QABusyError as exc:
-        raise HTTPException(status_code=503, detail=str(exc),
-                            headers={"Retry-After": str(max(1, int(exc.retry_after)))}) from exc
+        raise HTTPException(
+            status_code=503, detail=str(exc), headers={"Retry-After": str(max(1, int(exc.retry_after)))}
+        ) from exc
     except qa_service.QAError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 # ---- ask across all meetings ----
+
 
 @ask_router.post("/ask", response_model=AskOut)
 def ask_all_meetings(body: AskIn, owner: str = Depends(owner_id)) -> dict:
@@ -244,6 +245,7 @@ def ask_all_meetings(body: AskIn, owner: str = Depends(owner_id)) -> dict:
 
 # ---- live recording: pieces are transcribed while the meeting is still going ----
 
+
 def _recording_or_404(meeting_id: str, owner: str):
     meeting = _get_or_404(meeting_id, owner)
     if meeting.status != MeetingStatus.RECORDING:
@@ -253,12 +255,20 @@ def _recording_or_404(meeting_id: str, owner: str):
 
 @recordings_router.post("", status_code=201)
 def start_recording(request: Request, owner: str = Depends(owner_id)) -> dict:
-    _limit(_client_ip(request), _UPLOAD_RATE_LIMIT, _UPLOAD_RATE_WINDOW_SECONDS,
-           "Too many recordings from this address — try again shortly.")
-    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    _limit(
+        _client_ip(request),
+        _UPLOAD_RATE_LIMIT,
+        _UPLOAD_RATE_WINDOW_SECONDS,
+        "Too many recordings from this address — try again shortly.",
+    )
+    stamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
     meeting = create_meeting(
-        f"Recording {stamp}", f"rec-{uuid.uuid4().hex}", "", owner_id=owner,
-        source="recording", status=MeetingStatus.RECORDING,
+        f"Recording {stamp}",
+        f"rec-{uuid.uuid4().hex}",
+        "",
+        owner_id=owner,
+        source="recording",
+        status=MeetingStatus.RECORDING,
     )
     return {"id": meeting.id, "status": MeetingStatus.RECORDING}
 

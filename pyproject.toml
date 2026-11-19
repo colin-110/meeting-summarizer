@@ -1,0 +1,38 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# e2e: real browser against a local server with a fake AI provider.
+# live: hits a deployed server (set BASE_URL); never runs by default.
+addopts = "-m 'not e2e and not live'"
+markers = [
+    "e2e: browser tests with Playwright (pytest -m e2e)",
+    "live: smoke tests against a deployed server (BASE_URL=... pytest -m live)",
+]
+filterwarnings = ["ignore::DeprecationWarning:starlette.*", "ignore::DeprecationWarning:_pytest.*"]
+
+[tool.coverage.run]
+source = ["backend"]
+branch = true
+patch = ["subprocess"]
+
+[tool.coverage.report]
+fail_under = 90
+skip_covered = true
+show_missing = true
+exclude_also = ["if __name__ == .__main__.:"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "PLW1510"]
+ignore = [
+    "B008",   # FastAPI's File()/Depends() defaults are the documented pattern
+    "SIM105", # try/except/pass reads fine
+    "SIM108", # if/else blocks are often clearer than a long ternary
+    "E501",   # the formatter handles code; long lines left are prompt text
+    "UP047",  # TypeVar generics are fine
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["B011"]

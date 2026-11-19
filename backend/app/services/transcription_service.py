@@ -5,9 +5,9 @@ calls transcribe_file(audio_path); swapping ASR providers later means
 rewriting this one file, nothing upstream of it.
 """
 
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Callable, Optional
 
 from groq import APIConnectionError, Groq, InternalServerError, RateLimitError
 
@@ -43,7 +43,7 @@ def _keep_segment(seg) -> bool:
     )
 
 
-def transcribe(audio_path: str, *, client: Optional[Groq] = None) -> dict:
+def transcribe(audio_path: str, *, client: Groq | None = None) -> dict:
     """Transcribe one audio file. Returns {"text": str, "segments": [{start, end, text}]}
     with timestamps relative to the start of this file."""
     client = client or Groq()
@@ -100,8 +100,8 @@ def transcribe(audio_path: str, *, client: Optional[Groq] = None) -> dict:
 def transcribe_file(
     audio_path: str,
     *,
-    client: Optional[Groq] = None,
-    on_stage: Optional[Callable[[str], None]] = None,
+    client: Groq | None = None,
+    on_stage: Callable[[str], None] | None = None,
 ) -> dict:
     """Full pipeline for one recording: compress, shorten long pauses, split,
     transcribe the chunks in parallel and stitch them back together.
@@ -125,8 +125,11 @@ def transcribe_file(
         audio_service.cleanup(work_dir)
     timeline = prepared.timeline
     segments = [
-        {"start": timeline.to_original(s["start"]), "end": timeline.to_original(s["end"], is_end=True),
-         "text": s["text"]}
+        {
+            "start": timeline.to_original(s["start"]),
+            "end": timeline.to_original(s["end"], is_end=True),
+            "text": s["text"],
+        }
         for s in segments
     ]
     text = " ".join(s["text"] for s in segments)
@@ -149,7 +152,7 @@ def transcribe_chunks(chunks, *, client=None, on_stage=None) -> tuple[list, floa
         results = list(pool.map(lambda c: transcribe(str(c.path), client=client), chunks))
 
     segments = []
-    for chunk, result in zip(chunks, results):
+    for chunk, result in zip(chunks, results, strict=True):
         if not result["segments"] and result["text"]:
             # Provider gave text without timing: keep it as one segment at the chunk start.
             result["segments"] = [{"start": 0.0, "end": 0.0, "text": result["text"]}]

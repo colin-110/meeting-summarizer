@@ -1,7 +1,6 @@
 """Schema creation and in-place migrations."""
 
 from pathlib import Path
-from typing import Optional
 
 from backend.app.database.connection import get_connection
 
@@ -107,7 +106,7 @@ _NEW_COLUMNS = {
 }
 
 
-def init_db(db_path: Optional[Path] = None) -> None:
+def init_db(db_path: Path | None = None) -> None:
     conn = get_connection(db_path)
     try:
         conn.executescript(SCHEMA)

@@ -111,7 +111,7 @@ _MAX_CUTS = 400
 
 def _run(cmd: list[str], timeout: int = 900) -> subprocess.CompletedProcess:
     try:
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
     except subprocess.TimeoutExpired as exc:
         raise AudioProcessingError("Audio conversion timed out.") from exc
 
@@ -131,12 +131,14 @@ def _parse_silences(stderr: str, duration: float) -> list[tuple[float, float]]:
     ends = [float(x) for x in _SILENCE_END_RE.findall(stderr)]
     if len(starts) == len(ends) + 1:
         ends.append(duration)  # recording ends in silence
-    return [(a, b) for a, b in zip(starts, ends) if b > a]
+    return [(a, b) for a, b in zip(starts, ends, strict=False) if b > a]
 
 
 def _probe(path: Path) -> tuple[float, list[tuple[float, float]]]:
     """Separate detection pass; only used if the encode pass reported nothing."""
-    result = _run([ffmpeg_exe(), "-nostdin", "-hide_banner", "-i", str(path), "-af", _SILENCE_FILTER, "-f", "null", "-"])
+    result = _run(
+        [ffmpeg_exe(), "-nostdin", "-hide_banner", "-i", str(path), "-af", _SILENCE_FILTER, "-f", "null", "-"]
+    )
     m = _DURATION_RE.search(result.stderr)
     duration = _hms(m) if m else _output_seconds(result.stderr)
     return duration, _parse_silences(result.stderr, duration)
@@ -144,8 +146,21 @@ def _probe(path: Path) -> tuple[float, list[tuple[float, float]]]:
 
 def _compress(audio_path: str, out: Path) -> tuple[float, list[tuple[float, float]]]:
     """Re-encode to 16 kHz mono MP3 and detect pauses in the same decode pass."""
-    result = _run([ffmpeg_exe(), "-nostdin", "-hide_banner", "-nostats", "-y", "-i", audio_path,
-                   "-af", _SILENCE_FILTER, *_ENCODE, str(out)])
+    result = _run(
+        [
+            ffmpeg_exe(),
+            "-nostdin",
+            "-hide_banner",
+            "-nostats",
+            "-y",
+            "-i",
+            audio_path,
+            "-af",
+            _SILENCE_FILTER,
+            *_ENCODE,
+            str(out),
+        ]
+    )
     if result.returncode != 0 or not out.exists() or out.stat().st_size == 0:
         raise AudioProcessingError("Could not read this audio file — it may be corrupted or not real audio.")
     duration = _output_seconds(result.stderr)
@@ -196,8 +211,9 @@ def _remove_silence(src: Path, out: Path, cuts: list, expected: float) -> bool:
     # any floating-point tie at a boundary.
     expr = "+".join(f"between(t,{a - _GRID / 2:.3f},{b - _GRID / 2:.3f})" for a, b in cuts)
     graph = f"asetpts=N/SR/TB,asetnsamples=n=160:p=0,aselect='not({expr})',asetpts=N/SR/TB"
-    result = _run([ffmpeg_exe(), "-nostdin", "-hide_banner", "-nostats", "-y", "-i", str(src),
-                   "-af", graph, *_ENCODE, str(out)])
+    result = _run(
+        [ffmpeg_exe(), "-nostdin", "-hide_banner", "-nostats", "-y", "-i", str(src), "-af", graph, *_ENCODE, str(out)]
+    )
     got = _output_seconds(result.stderr)
     if result.returncode != 0 or abs(got - expected) > 0.3 + 0.002 * len(cuts):
         log.warning("silence removal skipped: expected %.2fs of audio, ffmpeg produced %.2fs", expected, got)
@@ -232,8 +248,9 @@ def split_and_compress(audio_path: str, work_dir: Path) -> PreparedAudio:
     duration, silences = _compress(audio_path, full)
 
     source, timeline = full, Timeline.identity(duration)
-    removed = plan_silence_cuts(duration, silences, min_gap=config.SKIP_SILENCE_SECONDS,
-                                keep=config.KEEP_SILENCE_SECONDS)
+    removed = plan_silence_cuts(
+        duration, silences, min_gap=config.SKIP_SILENCE_SECONDS, keep=config.KEEP_SILENCE_SECONDS
+    )
     if removed:
         planned = timeline_for(duration, removed)
         trimmed = work_dir / "trimmed.mp3"
@@ -251,16 +268,31 @@ def split_and_compress(audio_path: str, work_dir: Path) -> PreparedAudio:
     pauses = [timeline.to_sent((a + b) / 2) for a, b in silences]
     cuts = pick_cuts(sent, pauses, chunk_seconds)
     pattern = work_dir / "chunk_%04d.mp3"
-    result = _run([
-        ffmpeg_exe(), "-nostdin", "-v", "error", "-y", "-i", str(source), "-c", "copy",
-        "-f", "segment", "-segment_times", ",".join(str(c) for c in cuts),
-        "-reset_timestamps", "1", str(pattern),
-    ])
+    result = _run(
+        [
+            ffmpeg_exe(),
+            "-nostdin",
+            "-v",
+            "error",
+            "-y",
+            "-i",
+            str(source),
+            "-c",
+            "copy",
+            "-f",
+            "segment",
+            "-segment_times",
+            ",".join(str(c) for c in cuts),
+            "-reset_timestamps",
+            "1",
+            str(pattern),
+        ]
+    )
     paths = sorted(work_dir.glob("chunk_*.mp3"))
     if result.returncode != 0 or len(paths) != len(cuts) + 1:
         raise AudioProcessingError("Could not split this audio file.")
     source.unlink(missing_ok=True)
-    chunks = [Chunk(path=p, offset_seconds=o) for p, o in zip(paths, [0.0, *cuts])]
+    chunks = [Chunk(path=p, offset_seconds=o) for p, o in zip(paths, [0.0, *cuts], strict=False)]
     return PreparedAudio(chunks, timeline, removed)
 
 

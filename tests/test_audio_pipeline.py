@@ -12,8 +12,20 @@ def tone(tmp_path):
     """A real 25-second WAV, generated with ffmpeg."""
     path = tmp_path / "tone.wav"
     subprocess.run(
-        [audio_service.ffmpeg_exe(), "-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=25",
-         "-ar", "44100", "-ac", "2", str(path)],
+        [
+            audio_service.ffmpeg_exe(),
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=25",
+            "-ar",
+            "44100",
+            "-ac",
+            "2",
+            str(path),
+        ],
         check=True,
     )
     return path
@@ -31,9 +43,22 @@ class _FakeClient:
             def create(**kwargs):
                 name = kwargs["file"][0]
                 outer.calls.append(name)
-                return type("R", (), {"text": name, "segments": [
-                    {"start": 0.0, "end": 5.0, "text": f"said in {name}", "no_speech_prob": 0.0, "avg_logprob": -0.2},
-                ]})()
+                return type(
+                    "R",
+                    (),
+                    {
+                        "text": name,
+                        "segments": [
+                            {
+                                "start": 0.0,
+                                "end": 5.0,
+                                "text": f"said in {name}",
+                                "no_speech_prob": 0.0,
+                                "avg_logprob": -0.2,
+                            },
+                        ],
+                    },
+                )()
 
         class _A:
             transcriptions = _T()
@@ -87,10 +112,17 @@ def test_transcribe_drops_hallucinated_silence_segments(tmp_path):
     class _T:
         @staticmethod
         def create(**kwargs):
-            return type("R", (), {"text": "Thank you. real words", "segments": [
-                {"start": 0, "end": 2, "text": " Thank you.", "no_speech_prob": 0.9, "avg_logprob": -1.8},
-                {"start": 2, "end": 4, "text": " real words", "no_speech_prob": 0.05, "avg_logprob": -0.2},
-            ]})()
+            return type(
+                "R",
+                (),
+                {
+                    "text": "Thank you. real words",
+                    "segments": [
+                        {"start": 0, "end": 2, "text": " Thank you.", "no_speech_prob": 0.9, "avg_logprob": -1.8},
+                        {"start": 2, "end": 4, "text": " real words", "no_speech_prob": 0.05, "avg_logprob": -0.2},
+                    ],
+                },
+            )()
 
     class _A:
         transcriptions = _T()
@@ -104,11 +136,11 @@ def test_transcribe_drops_hallucinated_silence_segments(tmp_path):
 def test_pick_cuts_snaps_to_pauses_and_falls_back_to_grid():
     from backend.app.services.audio_service import pick_cuts
 
-    assert pick_cuts(25, [], 10) == [10, 20]                       # no pauses: plain grid
-    assert pick_cuts(30, [12.5], 10) == [12.5, 22.5]               # snaps to the pause, then re-targets from there
-    assert pick_cuts(25, [40.0], 10) == [10, 20]                   # far-away pause ignored
-    assert pick_cuts(21, [], 10) == [10]                           # no tiny trailing chunk
-    assert pick_cuts(5, [2.0], 10) == []                           # short audio: one chunk
+    assert pick_cuts(25, [], 10) == [10, 20]  # no pauses: plain grid
+    assert pick_cuts(30, [12.5], 10) == [12.5, 22.5]  # snaps to the pause, then re-targets from there
+    assert pick_cuts(25, [40.0], 10) == [10, 20]  # far-away pause ignored
+    assert pick_cuts(21, [], 10) == [10]  # no tiny trailing chunk
+    assert pick_cuts(5, [2.0], 10) == []  # short audio: one chunk
 
 
 def test_split_cuts_at_a_real_pause_not_mid_speech(tmp_path, monkeypatch):
@@ -116,11 +148,26 @@ def test_split_cuts_at_a_real_pause_not_mid_speech(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "CHUNK_SECONDS", 10)
     path = tmp_path / "gap.wav"
     subprocess.run(
-        [audio_service.ffmpeg_exe(), "-v", "error",
-         "-f", "lavfi", "-i", "sine=frequency=440:duration=12",
-         "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono:d=1",
-         "-f", "lavfi", "-i", "sine=frequency=440:duration=12",
-         "-filter_complex", "[0][1][2]concat=n=3:v=0:a=1", str(path)],
+        [
+            audio_service.ffmpeg_exe(),
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=12",
+            "-f",
+            "lavfi",
+            "-i",
+            "anullsrc=r=44100:cl=mono:d=1",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=12",
+            "-filter_complex",
+            "[0][1][2]concat=n=3:v=0:a=1",
+            str(path),
+        ],
         check=True,
     )
     work = tmp_path / "work"
@@ -134,17 +181,35 @@ def test_split_cuts_at_a_real_pause_not_mid_speech(tmp_path, monkeypatch):
 
 # ---- silence skipping ----
 
+
 def _gappy(tmp_path, gaps=(6, 6)):
     """5s tone, then for each gap: that many seconds of silence and another 5s tone."""
     path = tmp_path / "gappy.wav"
     inputs, labels = ["-f", "lavfi", "-i", "sine=frequency=440:duration=5"], ["[0]"]
     for i, gap in enumerate(gaps):
-        inputs += ["-f", "lavfi", "-i", f"anullsrc=r=44100:cl=mono:d={gap}",
-                   "-f", "lavfi", "-i", "sine=frequency=440:duration=5"]
+        inputs += [
+            "-f",
+            "lavfi",
+            "-i",
+            f"anullsrc=r=44100:cl=mono:d={gap}",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=5",
+        ]
         labels += [f"[{2 * i + 1}]", f"[{2 * i + 2}]"]
     subprocess.run(
-        [audio_service.ffmpeg_exe(), "-v", "error", *inputs, "-filter_complex",
-         f"{''.join(labels)}concat=n={len(labels)}:v=0:a=1", "-ac", "1", str(path)],
+        [
+            audio_service.ffmpeg_exe(),
+            "-v",
+            "error",
+            *inputs,
+            "-filter_complex",
+            f"{''.join(labels)}concat=n={len(labels)}:v=0:a=1",
+            "-ac",
+            "1",
+            str(path),
+        ],
         check=True,
     )
     return path
@@ -155,9 +220,9 @@ def test_plan_silence_cuts_shortens_only_long_pauses():
 
     silences = [(5.0, 11.0), (12.0, 13.0), (20.0, 26.0)]
     cuts = plan_silence_cuts(30, silences, min_gap=2.0, keep=0.6)
-    assert cuts == [(5.3, 10.7), (20.3, 25.7)]           # the 1s pause is left alone
+    assert cuts == [(5.3, 10.7), (20.3, 25.7)]  # the 1s pause is left alone
     assert plan_silence_cuts(30, [(5.0, 7.5)], min_gap=2.0, keep=0.6) == []  # saving too small
-    assert plan_silence_cuts(30, silences, min_gap=0, keep=0.6) == []        # disabled
+    assert plan_silence_cuts(30, silences, min_gap=0, keep=0.6) == []  # disabled
 
 
 def test_timeline_maps_sent_time_back_to_the_recording():
@@ -166,11 +231,11 @@ def test_timeline_maps_sent_time_back_to_the_recording():
     tl = timeline_for(30.0, [(5.3, 10.7), (20.3, 25.7)])
     assert tl.sent_seconds == pytest.approx(19.2)
     assert tl.to_original(0.0) == 0.0
-    assert tl.to_original(5.3) == 10.7                   # a start on the join is after the cut
-    assert tl.to_original(5.3, is_end=True) == 5.3       # an end on the join is before it
+    assert tl.to_original(5.3) == 10.7  # a start on the join is after the cut
+    assert tl.to_original(5.3, is_end=True) == 5.3  # an end on the join is before it
     assert tl.to_original(6.0) == 11.4
     assert tl.to_original(19.2, is_end=True) == 30.0
-    assert tl.to_sent(8.0) == pytest.approx(5.3)          # inside a removed pause -> the join
+    assert tl.to_sent(8.0) == pytest.approx(5.3)  # inside a removed pause -> the join
 
 
 def test_long_pauses_are_not_sent_and_timestamps_still_match(tmp_path, monkeypatch):
@@ -183,8 +248,12 @@ def test_long_pauses_are_not_sent_and_timestamps_still_match(tmp_path, monkeypat
     prepared = audio_service.split_and_compress(str(path), work)
     assert prepared.timeline.original_seconds == pytest.approx(27.0, abs=0.1)
     assert prepared.timeline.sent_seconds == pytest.approx(16.2, abs=0.3)
-    sent = subprocess.run([audio_service.ffmpeg_exe(), "-i", str(prepared.chunks[0].path), "-f", "null", "-"],
-                          capture_output=True, text=True).stderr
+    sent = subprocess.run(
+        [audio_service.ffmpeg_exe(), "-i", str(prepared.chunks[0].path), "-f", "null", "-"],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stderr
     assert audio_service._output_seconds(sent) == pytest.approx(prepared.timeline.sent_seconds, abs=0.1)
 
     tones_in_sent_audio = [(0.0, 5.0), (5.6, 10.6), (11.2, 16.2)]
@@ -192,9 +261,17 @@ def test_long_pauses_are_not_sent_and_timestamps_still_match(tmp_path, monkeypat
     class _T:
         @staticmethod
         def create(**kwargs):
-            return type("R", (), {"text": "", "segments": [
-                {"start": a, "end": b, "text": f"tone {i}", "no_speech_prob": 0.0, "avg_logprob": -0.1}
-                for i, (a, b) in enumerate(tones_in_sent_audio)]})()
+            return type(
+                "R",
+                (),
+                {
+                    "text": "",
+                    "segments": [
+                        {"start": a, "end": b, "text": f"tone {i}", "no_speech_prob": 0.0, "avg_logprob": -0.1}
+                        for i, (a, b) in enumerate(tones_in_sent_audio)
+                    ],
+                },
+            )()
 
     client = type("C", (), {"audio": type("A", (), {"transcriptions": _T()})()})()
     result = transcribe_file(str(path), client=client)

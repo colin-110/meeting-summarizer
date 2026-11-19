@@ -13,7 +13,6 @@ the app runs as several web processes and separate worker processes.
 
 import time
 from pathlib import Path
-from typing import Optional
 
 from backend.app.database.connection import get_connection
 from backend.app.utils.errors import ProviderBusyError
@@ -23,9 +22,7 @@ class RateLimitExceeded(Exception):
     """Raised when a client has exceeded the allowed request rate."""
 
 
-def check_rate_limit(
-    client_id: str, *, max_requests: int, window_seconds: float, db_path: Optional[Path] = None
-) -> None:
+def check_rate_limit(client_id: str, *, max_requests: int, window_seconds: float, db_path: Path | None = None) -> None:
     """Raise RateLimitExceeded if client_id has made too many calls recently;
     otherwise record this call. Sliding window."""
     now = time.time()
@@ -54,7 +51,7 @@ def acquire_budget(
     limit: float,
     window_seconds: float = 60.0,
     max_wait_seconds: float = 240.0,
-    db_path: Optional[Path] = None,
+    db_path: Path | None = None,
 ) -> int:
     """Reserve `amount` units of `key`'s budget, waiting until it fits.
 
@@ -74,9 +71,7 @@ def acquire_budget(
                 "SELECT COALESCE(SUM(amount), 0), MIN(ts) FROM rate_events WHERE key = ?", (bkey,)
             ).fetchone()
             if used + amount <= limit:
-                cur = conn.execute(
-                    "INSERT INTO rate_events (key, ts, amount) VALUES (?, ?, ?)", (bkey, now, amount)
-                )
+                cur = conn.execute("INSERT INTO rate_events (key, ts, amount) VALUES (?, ?, ?)", (bkey, now, amount))
                 conn.commit()
                 return cur.lastrowid
             conn.rollback()
@@ -84,9 +79,7 @@ def acquire_budget(
             conn.close()
         wait = (oldest + window_seconds - now) if oldest else 1.0
         if now + wait > deadline:
-            raise ProviderBusyError(
-                f"AI provider budget for {key} is exhausted right now.", retry_after=wait
-            )
+            raise ProviderBusyError(f"AI provider budget for {key} is exhausted right now.", retry_after=wait)
         time.sleep(min(max(wait, 0.2), 5.0))
 
 
@@ -113,7 +106,7 @@ def acquire_first_available(
     raise ValueError("no budget keys given")
 
 
-def settle_budget(reservation_id: int, actual: float, db_path: Optional[Path] = None) -> None:
+def settle_budget(reservation_id: int, actual: float, db_path: Path | None = None) -> None:
     """Replace a reservation's estimate with what the call really used."""
     conn = get_connection(db_path)
     try:
@@ -123,7 +116,7 @@ def settle_budget(reservation_id: int, actual: float, db_path: Optional[Path] = 
         conn.close()
 
 
-def budget_used(key: str, window_seconds: float = 60.0, db_path: Optional[Path] = None) -> float:
+def budget_used(key: str, window_seconds: float = 60.0, db_path: Path | None = None) -> float:
     conn = get_connection(db_path)
     try:
         return conn.execute(

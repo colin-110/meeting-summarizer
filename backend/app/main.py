@@ -10,8 +10,8 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from backend.app.api.health import router as health_router
-from backend.app.api.meetings import router as meetings_router
 from backend.app.api.meetings import ask_router, recordings_router
+from backend.app.api.meetings import router as meetings_router
 from backend.app.core import config
 from backend.app.core.logging import configure_logging, get_logger
 from backend.app.database.init_db import init_db

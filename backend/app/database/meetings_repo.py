@@ -9,9 +9,8 @@ import re
 import sqlite3
 import time
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Optional
 
 from backend.app.core import config
 from backend.app.database.connection import get_connection
@@ -20,7 +19,7 @@ from backend.app.utils.usage import merge_usage
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _row_to_meeting(row: sqlite3.Row) -> Meeting:
@@ -57,7 +56,7 @@ def create_meeting(
     filename: str,
     file_hash: str,
     audio_path: str,
-    db_path: Optional[Path] = None,
+    db_path: Path | None = None,
     *,
     owner_id: str = "",
     source: str = "upload",
@@ -80,7 +79,7 @@ def create_meeting(
     return get_meeting(meeting_id, db_path)
 
 
-def get_meeting(meeting_id: str, db_path: Optional[Path] = None) -> Optional[Meeting]:
+def get_meeting(meeting_id: str, db_path: Path | None = None) -> Meeting | None:
     conn = get_connection(db_path)
     try:
         row = conn.execute("SELECT * FROM meetings WHERE id = ?", (meeting_id,)).fetchone()
@@ -93,31 +92,35 @@ _LIST_COLUMNS = "id, filename, title, status, stage, created_at, updated_at"
 
 # Highlight from the transcript, else summary, else title — never owner_id,
 # which matches every row of a scoped search.
-_SNIPPET_SQL = "CASE " + " ".join(
-    f"WHEN instr(snippet(meetings_fts, {col}, '[[', ']]', '…', 12), '[[') > 0 "
-    f"THEN snippet(meetings_fts, {col}, '[[', ']]', '…', 12)"
-    for col in (4, 3, 2)
-) + " ELSE NULL END"
+_SNIPPET_SQL = (
+    "CASE "
+    + " ".join(
+        f"WHEN instr(snippet(meetings_fts, {col}, '[[', ']]', '…', 12), '[[') > 0 "
+        f"THEN snippet(meetings_fts, {col}, '[[', ']]', '…', 12)"
+        for col in (4, 3, 2)
+    )
+    + " ELSE NULL END"
+)
 
 
-def _fts_query(text: str) -> Optional[str]:
+def _fts_query(text: str) -> str | None:
     """Turn free user text into a safe FTS5 query: every word quoted (so
     operators/punctuation can't break the syntax) with prefix matching."""
     words = re.findall(r"\w+", text)
     return " ".join(f'"{w}"*' for w in words[:10]) or None
 
 
-def _scoped(match: str, owner_id: Optional[str]) -> str:
+def _scoped(match: str, owner_id: str | None) -> str:
     return f'owner_id:"{owner_id}" AND ({match})' if owner_id is not None else match
 
 
 def list_meetings(
-    owner_id: Optional[str] = None,
+    owner_id: str | None = None,
     *,
     limit: int = 50,
     offset: int = 0,
-    query: Optional[str] = None,
-    db_path: Optional[Path] = None,
+    query: str | None = None,
+    db_path: Path | None = None,
 ) -> list[dict]:
     """Lean listing: never loads transcripts. owner_id=None lists everything
     (internal/test use); the API always passes the caller's owner."""
@@ -147,7 +150,7 @@ def list_meetings(
         conn.close()
 
 
-def find_leader_by_hash(file_hash: str, db_path: Optional[Path] = None) -> Optional[Meeting]:
+def find_leader_by_hash(file_hash: str, db_path: Path | None = None) -> Meeting | None:
     """The canonical meeting for this content: the earliest-created,
     non-FAILED meeting sharing this file_hash.
 
@@ -160,8 +163,7 @@ def find_leader_by_hash(file_hash: str, db_path: Optional[Path] = None) -> Optio
     conn = get_connection(db_path)
     try:
         row = conn.execute(
-            "SELECT * FROM meetings WHERE file_hash = ? AND status != ? "
-            "ORDER BY created_at ASC, id ASC LIMIT 1",
+            "SELECT * FROM meetings WHERE file_hash = ? AND status != ? ORDER BY created_at ASC, id ASC LIMIT 1",
             (file_hash, MeetingStatus.FAILED),
         ).fetchone()
     finally:
@@ -173,8 +175,8 @@ def update_status(
     meeting_id: str,
     status: str,
     *,
-    error_message: Optional[str] = None,
-    db_path: Optional[Path] = None,
+    error_message: str | None = None,
+    db_path: Path | None = None,
 ) -> None:
     conn = get_connection(db_path)
     try:
@@ -196,7 +198,7 @@ def update_status(
         conn.close()
 
 
-def save_transcript(meeting_id: str, transcript: str, db_path: Optional[Path] = None) -> None:
+def save_transcript(meeting_id: str, transcript: str, db_path: Path | None = None) -> None:
     conn = get_connection(db_path)
     try:
         conn.execute(
@@ -213,9 +215,9 @@ def save_summary(
     summary: str,
     key_decisions: list,
     action_items: list,
-    title: Optional[str] = None,
-    open_questions: Optional[list] = None,
-    db_path: Optional[Path] = None,
+    title: str | None = None,
+    open_questions: list | None = None,
+    db_path: Path | None = None,
 ) -> None:
     conn = get_connection(db_path)
     try:
@@ -253,11 +255,14 @@ def _index_for_search(conn: sqlite3.Connection, meeting_id: str) -> None:
     if row and row["segments"]:
         conn.executemany(
             "INSERT INTO segments_fts (meeting_id, owner_id, seg_index, start, text) VALUES (?, ?, ?, ?, ?)",
-            [(meeting_id, row["owner_id"], i, s["start"], s["text"]) for i, s in enumerate(json.loads(row["segments"]))],
+            [
+                (meeting_id, row["owner_id"], i, s["start"], s["text"])
+                for i, s in enumerate(json.loads(row["segments"]))
+            ],
         )
 
 
-def claim_next(db_path: Optional[Path] = None) -> Optional[str]:
+def claim_next(db_path: Path | None = None) -> str | None:
     """Atomically lease the next runnable job and mark it PROCESSING.
 
     Runnable means QUEUED (and past any retry delay), or PROCESSING with an
@@ -310,7 +315,7 @@ def claim_next(db_path: Optional[Path] = None) -> Optional[str]:
         conn.close()
 
 
-def renew_lease(meeting_id: str, db_path: Optional[Path] = None) -> None:
+def renew_lease(meeting_id: str, db_path: Path | None = None) -> None:
     """Heartbeat: extend a running job's lease so it isn't taken over."""
     conn = get_connection(db_path)
     try:
@@ -323,7 +328,7 @@ def renew_lease(meeting_id: str, db_path: Optional[Path] = None) -> None:
         conn.close()
 
 
-def defer(meeting_id: str, delay_seconds: float, reason: str, db_path: Optional[Path] = None) -> None:
+def defer(meeting_id: str, delay_seconds: float, reason: str, db_path: Path | None = None) -> None:
     """Put a job back on the queue to retry after a delay (provider out of
     capacity). Doesn't count as a failed attempt."""
     conn = get_connection(db_path)
@@ -338,26 +343,25 @@ def defer(meeting_id: str, delay_seconds: float, reason: str, db_path: Optional[
         conn.close()
 
 
-def queue_depth(db_path: Optional[Path] = None) -> int:
+def queue_depth(db_path: Path | None = None) -> int:
     conn = get_connection(db_path)
     try:
-        return conn.execute(
-            "SELECT COUNT(*) FROM meetings WHERE status = ?", (MeetingStatus.QUEUED,)
-        ).fetchone()[0]
+        return conn.execute("SELECT COUNT(*) FROM meetings WHERE status = ?", (MeetingStatus.QUEUED,)).fetchone()[0]
     finally:
         conn.close()
 
 
-def queue_stats(db_path: Optional[Path] = None) -> dict:
+def queue_stats(db_path: Path | None = None) -> dict:
     """Numbers for /metrics: counts by status, oldest waiting job, recent durations."""
     conn = get_connection(db_path)
     try:
-        by_status = {r["status"]: r["n"] for r in conn.execute(
-            "SELECT status, COUNT(*) AS n FROM meetings GROUP BY status")}
+        by_status = {
+            r["status"]: r["n"] for r in conn.execute("SELECT status, COUNT(*) AS n FROM meetings GROUP BY status")
+        }
         oldest = conn.execute(
             "SELECT MIN(created_at) FROM meetings WHERE status = ?", (MeetingStatus.QUEUED,)
         ).fetchone()[0]
-        cutoff = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        cutoff = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
         durations = conn.execute(
             "SELECT processing_started_at, processing_completed_at FROM meetings "
             "WHERE status = ? AND processing_completed_at > ?",
@@ -373,12 +377,13 @@ def queue_stats(db_path: Optional[Path] = None) -> dict:
         conn.close()
     secs = [
         (datetime.fromisoformat(r[1]) - datetime.fromisoformat(r[0])).total_seconds()
-        for r in durations if r[0] and r[1]
+        for r in durations
+        if r[0] and r[1]
     ]
     return {
         "by_status": by_status,
         "oldest_queued_seconds": (
-            (datetime.now(timezone.utc) - datetime.fromisoformat(oldest)).total_seconds() if oldest else 0.0
+            (datetime.now(UTC) - datetime.fromisoformat(oldest)).total_seconds() if oldest else 0.0
         ),
         "completed_last_hour": len(secs),
         "avg_processing_seconds_last_hour": sum(secs) / len(secs) if secs else 0.0,
@@ -389,20 +394,16 @@ def queue_stats(db_path: Optional[Path] = None) -> dict:
     }
 
 
-def set_stage(meeting_id: str, stage: str, db_path: Optional[Path] = None) -> None:
+def set_stage(meeting_id: str, stage: str, db_path: Path | None = None) -> None:
     conn = get_connection(db_path)
     try:
-        conn.execute(
-            "UPDATE meetings SET stage = ?, updated_at = ? WHERE id = ?", (stage, _now(), meeting_id)
-        )
+        conn.execute("UPDATE meetings SET stage = ?, updated_at = ? WHERE id = ?", (stage, _now(), meeting_id))
         conn.commit()
     finally:
         conn.close()
 
 
-def save_segments(
-    meeting_id: str, segments: list, audio_seconds: Optional[float], db_path: Optional[Path] = None
-) -> None:
+def save_segments(meeting_id: str, segments: list, audio_seconds: float | None, db_path: Path | None = None) -> None:
     conn = get_connection(db_path)
     try:
         conn.execute(
@@ -414,7 +415,7 @@ def save_segments(
         conn.close()
 
 
-def audio_in_use(file_hash: str, exclude_id: str, db_path: Optional[Path] = None) -> bool:
+def audio_in_use(file_hash: str, exclude_id: str, db_path: Path | None = None) -> bool:
     """True if another meeting with this audio is still waiting to be processed."""
     conn = get_connection(db_path)
     try:
@@ -427,7 +428,7 @@ def audio_in_use(file_hash: str, exclude_id: str, db_path: Optional[Path] = None
         conn.close()
 
 
-def delete_meeting(meeting_id: str, db_path: Optional[Path] = None) -> Optional[Meeting]:
+def delete_meeting(meeting_id: str, db_path: Path | None = None) -> Meeting | None:
     """Delete one meeting row (and its search entry). Returns the deleted
     meeting so the caller can clean up its audio file, or None if absent."""
     meeting = get_meeting(meeting_id, db_path)
@@ -450,11 +451,11 @@ def delete_meeting(meeting_id: str, db_path: Optional[Path] = None) -> Optional[
     return meeting
 
 
-def purge_older_than(days: int, db_path: Optional[Path] = None) -> list[Meeting]:
+def purge_older_than(days: int, db_path: Path | None = None) -> list[Meeting]:
     """Delete finished meetings older than `days`, and live recordings that
     were started but never finished more than a day ago. Returns what was deleted."""
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    abandoned = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
+    abandoned = (datetime.now(UTC) - timedelta(days=1)).isoformat()
     conn = get_connection(db_path)
     try:
         ids = [
@@ -472,7 +473,7 @@ def purge_older_than(days: int, db_path: Optional[Path] = None) -> list[Meeting]
     return [m for m in (delete_meeting(i, db_path) for i in ids) if m is not None]
 
 
-def save_chapters(meeting_id: str, chapters: list, db_path: Optional[Path] = None) -> None:
+def save_chapters(meeting_id: str, chapters: list, db_path: Path | None = None) -> None:
     conn = get_connection(db_path)
     try:
         conn.execute(
@@ -484,14 +485,14 @@ def save_chapters(meeting_id: str, chapters: list, db_path: Optional[Path] = Non
         conn.close()
 
 
-def save_notes_cache(meeting_id: str, cache: dict, db_path: Optional[Path] = None) -> None:
+def save_notes_cache(meeting_id: str, cache: dict, db_path: Path | None = None) -> None:
     """Checkpoint finished section summaries, so a retry only redoes what's missing.
     Merged into what's stored, so concurrent writers (a live pre-summary and
     the worker) never erase each other's sections."""
     _merge_json(meeting_id, "notes_cache", cache, lambda old, new: {**old, **new}, db_path, touch=False)
 
 
-def add_usage(meeting_id: str, delta: dict, db_path: Optional[Path] = None) -> None:
+def add_usage(meeting_id: str, delta: dict, db_path: Path | None = None) -> None:
     """Add provider usage (tokens, audio seconds) to a meeting's running totals."""
     _merge_json(meeting_id, "usage", delta, merge_usage, db_path, touch=True)
 
@@ -512,7 +513,7 @@ def _merge_json(meeting_id, column, value, combine, db_path, *, touch: bool) -> 
         conn.close()
 
 
-def get_version(meeting_id: str, db_path: Optional[Path] = None) -> Optional[dict]:
+def get_version(meeting_id: str, db_path: Path | None = None) -> dict | None:
     """Just enough to answer a conditional GET without loading the transcript."""
     conn = get_connection(db_path)
     try:
@@ -524,7 +525,7 @@ def get_version(meeting_id: str, db_path: Optional[Path] = None) -> Optional[dic
     return dict(row) if row else None
 
 
-def owner_backlog(owner_id: str, db_path: Optional[Path] = None) -> int:
+def owner_backlog(owner_id: str, db_path: Path | None = None) -> int:
     """Meetings this owner has waiting or in progress."""
     conn = get_connection(db_path)
     try:
@@ -538,7 +539,8 @@ def owner_backlog(owner_id: str, db_path: Optional[Path] = None) -> int:
 
 # ---- answer cache ----
 
-def cached_answer(key: str, db_path: Optional[Path] = None) -> Optional[dict]:
+
+def cached_answer(key: str, db_path: Path | None = None) -> dict | None:
     conn = get_connection(db_path)
     try:
         row = conn.execute("SELECT answer, sources FROM answer_cache WHERE key = ?", (key,)).fetchone()
@@ -551,8 +553,9 @@ def cached_answer(key: str, db_path: Optional[Path] = None) -> Optional[dict]:
         conn.close()
 
 
-def store_answer(key: str, owner_id: str, meeting_id: Optional[str], answer: str, sources: list,
-                 db_path: Optional[Path] = None) -> None:
+def store_answer(
+    key: str, owner_id: str, meeting_id: str | None, answer: str, sources: list, db_path: Path | None = None
+) -> None:
     conn = get_connection(db_path)
     try:
         conn.execute(
@@ -565,8 +568,9 @@ def store_answer(key: str, owner_id: str, meeting_id: Optional[str], answer: str
         conn.close()
 
 
-def search_segments(owner_id: str, terms: list[str], limit: int = 30, meeting_id: Optional[str] = None,
-                    db_path: Optional[Path] = None) -> list[dict]:
+def search_segments(
+    owner_id: str, terms: list[str], limit: int = 30, meeting_id: str | None = None, db_path: Path | None = None
+) -> list[dict]:
     """BM25-ranked transcript segments matching any of `terms`, for one owner
     (optionally one meeting). Each hit: meeting_id, title, seg_index, start, text."""
     if not terms:
@@ -591,8 +595,10 @@ def search_segments(owner_id: str, terms: list[str], limit: int = 30, meeting_id
 
 # ---- live recording pieces ----
 
-def add_recording_chunk(meeting_id: str, seq: int, offset_seconds: float, audio_path: str, file_hash: str,
-                        db_path: Optional[Path] = None) -> bool:
+
+def add_recording_chunk(
+    meeting_id: str, seq: int, offset_seconds: float, audio_path: str, file_hash: str, db_path: Path | None = None
+) -> bool:
     """Register an uploaded piece. Returns False if this seq was already received
     (client retry), so a duplicate never double-counts audio."""
     conn = get_connection(db_path)
@@ -608,7 +614,7 @@ def add_recording_chunk(meeting_id: str, seq: int, offset_seconds: float, audio_
         conn.close()
 
 
-def save_chunk_segments(meeting_id: str, seq: int, segments: list, db_path: Optional[Path] = None) -> None:
+def save_chunk_segments(meeting_id: str, seq: int, segments: list, db_path: Path | None = None) -> None:
     conn = get_connection(db_path)
     try:
         conn.execute(
@@ -620,7 +626,7 @@ def save_chunk_segments(meeting_id: str, seq: int, segments: list, db_path: Opti
         conn.close()
 
 
-def list_recording_chunks(meeting_id: str, db_path: Optional[Path] = None) -> list[dict]:
+def list_recording_chunks(meeting_id: str, db_path: Path | None = None) -> list[dict]:
     conn = get_connection(db_path)
     try:
         rows = conn.execute(
@@ -631,11 +637,14 @@ def list_recording_chunks(meeting_id: str, db_path: Optional[Path] = None) -> li
     return [{**dict(r), "segments": json.loads(r["segments"]) if r["segments"] else []} for r in rows]
 
 
-def chunk_audio_in_use(file_hash: str, db_path: Optional[Path] = None) -> bool:
+def chunk_audio_in_use(file_hash: str, db_path: Path | None = None) -> bool:
     conn = get_connection(db_path)
     try:
-        return conn.execute(
-            "SELECT 1 FROM recording_chunks WHERE file_hash = ? AND status = 'pending' LIMIT 1", (file_hash,)
-        ).fetchone() is not None
+        return (
+            conn.execute(
+                "SELECT 1 FROM recording_chunks WHERE file_hash = ? AND status = 'pending' LIMIT 1", (file_hash,)
+            ).fetchone()
+            is not None
+        )
     finally:
         conn.close()

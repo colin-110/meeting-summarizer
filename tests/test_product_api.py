@@ -6,7 +6,14 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend.app.core import config
-from backend.app.database.meetings_repo import create_meeting, get_meeting, save_segments, save_summary, save_transcript, update_status
+from backend.app.database.meetings_repo import (
+    create_meeting,
+    get_meeting,
+    save_segments,
+    save_summary,
+    save_transcript,
+    update_status,
+)
 from backend.app.models.meeting import MeetingStatus
 from backend.app.services import audio_service, processing_service, qa_service
 
@@ -40,9 +47,12 @@ def _completed(owner_token, title="Budget Sync"):
     save_transcript(m.id, "We agreed to hire two engineers.")
     save_segments(m.id, [{"start": 3.0, "end": 6.0, "text": "We agreed to hire two engineers."}], 6.0)
     save_summary(
-        m.id, "Hiring plan.", ["Hire two engineers"],
+        m.id,
+        "Hiring plan.",
+        ["Hire two engineers"],
         [{"task": "Post the job ads", "assignee": "Sam", "deadline": "Friday"}],
-        title=title, open_questions=["What is the budget?"],
+        title=title,
+        open_questions=["What is the budget?"],
     )
     update_status(m.id, MeetingStatus.COMPLETED)
     return m.id
@@ -62,7 +72,10 @@ def test_meetings_are_private_to_their_owner(app):
         for path in ("", "/status", "/export"):
             assert client.get(f"/api/v1/meetings/{mine}{path}", headers=_h(_token("b"))).status_code == 404
         assert client.get(f"/api/v1/meetings/{mine}/status", headers=_h(_token("b"))).status_code == 404
-        assert client.post(f"/api/v1/meetings/{mine}/ask", json={"question": "what?"}, headers=_h(_token("b"))).status_code == 404
+        assert (
+            client.post(f"/api/v1/meetings/{mine}/ask", json={"question": "what?"}, headers=_h(_token("b"))).status_code
+            == 404
+        )
         assert client.delete(f"/api/v1/meetings/{mine}", headers=_h(_token("b"))).status_code == 404
         assert client.get("/api/v1/meetings", headers=_h(_token("b"))).json() == []
         assert len(client.get("/api/v1/meetings", headers=_h(_token("a"))).json()) == 1
@@ -97,7 +110,9 @@ def test_ask_answers_from_transcript(app, monkeypatch):
 
     monkeypatch.setattr(qa_service, "ask", fake_ask)
     with TestClient(app) as client:
-        r = client.post(f"/api/v1/meetings/{mid}/ask", json={"question": "Who is being hired?"}, headers=_h(_token("a")))
+        r = client.post(
+            f"/api/v1/meetings/{mid}/ask", json={"question": "Who is being hired?"}, headers=_h(_token("a"))
+        )
         short = client.post(f"/api/v1/meetings/{mid}/ask", json={"question": "hi"}, headers=_h(_token("a")))
     assert r.status_code == 200 and r.json() == {"answer": "Two engineers [00:03].", "sources": [], "cached": False}
     assert seen["context"] == "[00:03] We agreed to hire two engineers."
@@ -109,10 +124,13 @@ def test_ask_requires_completed_meeting_and_is_rate_limited(app, monkeypatch):
     mid = _completed(_token("r"))
     monkeypatch.setattr(qa_service, "ask", lambda *a, **k: {"answer": "ok", "sources": []})
     from backend.app.api import meetings as api
+
     monkeypatch.setattr(api, "_ASK_RATE_LIMIT", 2)
     with TestClient(app, headers=_h(_token("r"))) as client:
         assert client.post(f"/api/v1/meetings/{pending.id}/ask", json={"question": "anything?"}).status_code == 409
-        codes = [client.post(f"/api/v1/meetings/{mid}/ask", json={"question": "anything?"}).status_code for _ in range(3)]
+        codes = [
+            client.post(f"/api/v1/meetings/{mid}/ask", json={"question": "anything?"}).status_code for _ in range(3)
+        ]
     assert codes == [200, 200, 429]
 
 
@@ -178,8 +196,11 @@ class _FakeLLM:
             def create(**kw):
                 outer.calls.append(kw)
                 msg = type("M", (), {"content": reply})()
-                return type("R", (), {"choices": [type("Ch", (), {"message": msg})()],
-                                      "usage": type("U", (), {"total_tokens": 321})()})()
+                return type(
+                    "R",
+                    (),
+                    {"choices": [type("Ch", (), {"message": msg})()], "usage": type("U", (), {"total_tokens": 321})()},
+                )()
 
         self.chat = type("Chat", (), {"completions": _Completions()})()
 
@@ -206,8 +227,10 @@ def test_qa_short_meeting_sends_whole_transcript_with_tags():
 
 def test_qa_long_meeting_sends_only_relevant_passages(monkeypatch):
     monkeypatch.setattr(config, "QA_CONTEXT_CHARS", 2000)
-    filler = [{"start": float(i * 5), "end": float(i * 5 + 5), "text": f"routine filler sentence number {i} about nothing"}
-              for i in range(400)]
+    filler = [
+        {"start": float(i * 5), "end": float(i * 5 + 5), "text": f"routine filler sentence number {i} about nothing"}
+        for i in range(400)
+    ]
     filler[250] = {"start": 1250.0, "end": 1255.0, "text": "Priya will migrate the billing database next Tuesday"}
     m = _seed(_token("q"), "Long", filler)
     llm = _FakeLLM()
@@ -221,7 +244,11 @@ def test_qa_long_meeting_sends_only_relevant_passages(monkeypatch):
 
 
 def test_qa_ask_all_spans_meetings_and_stays_private():
-    _seed(_token("q"), "Pricing Review", [{"start": 10.0, "end": 14.0, "text": "we will raise the pro plan price to twelve dollars"}])
+    _seed(
+        _token("q"),
+        "Pricing Review",
+        [{"start": 10.0, "end": 14.0, "text": "we will raise the pro plan price to twelve dollars"}],
+    )
     _seed(_token("q"), "Hiring Sync", [{"start": 5.0, "end": 9.0, "text": "pricing for contractors stays the same"}])
     _seed(_token("z"), "Someone Else", [{"start": 1.0, "end": 2.0, "text": "pricing secret from another user"}])
     llm = _FakeLLM()
@@ -260,11 +287,17 @@ def test_new_audio_formats_accepted_with_valid_signatures(app):
     }
     with TestClient(app, headers=_h(_token("a"))) as client:
         for name, content in samples.items():
-            r = client.post("/api/v1/meetings", files={"audio": (name, io.BytesIO(content), "application/octet-stream")},
-                            headers={"x-forwarded-for": f"198.51.100.{len(name)}{hash(name) % 200}"})
+            r = client.post(
+                "/api/v1/meetings",
+                files={"audio": (name, io.BytesIO(content), "application/octet-stream")},
+                headers={"x-forwarded-for": f"198.51.100.{len(name)}{hash(name) % 200}"},
+            )
             assert r.status_code == 201, (name, r.text)
-        bad = client.post("/api/v1/meetings", files={"audio": ("fake.webm", io.BytesIO(b"not webm at all"), "x")},
-                          headers={"x-forwarded-for": "198.51.100.250"})
+        bad = client.post(
+            "/api/v1/meetings",
+            files={"audio": ("fake.webm", io.BytesIO(b"not webm at all"), "x")},
+            headers={"x-forwarded-for": "198.51.100.250"},
+        )
     assert bad.status_code == 422
 
 
@@ -275,20 +308,33 @@ def test_end_to_end_upload_to_completed_with_real_ffmpeg(app, tmp_path, monkeypa
     from tests.test_audio_pipeline import _FakeClient
 
     wav = tmp_path / "meeting.wav"
-    subprocess.run([audio_service.ffmpeg_exe(), "-v", "error", "-f", "lavfi", "-i", "sine=frequency=300:duration=12",
-                    str(wav)], check=True)
+    subprocess.run(
+        [audio_service.ffmpeg_exe(), "-v", "error", "-f", "lavfi", "-i", "sine=frequency=300:duration=12", str(wav)],
+        check=True,
+    )
 
     monkeypatch.setattr(config, "WORKER_CONCURRENCY", 1)
     monkeypatch.setattr(config, "CHUNK_SECONDS", 5)
     monkeypatch.setattr(transcription_service, "Groq", _FakeClient)
-    monkeypatch.setattr(processing_service, "summarize", lambda t: {
-        "title": "Tone Test", "summary": "A tone.", "key_decisions": ["Keep the tone"],
-        "action_items": [], "open_questions": []})
+    monkeypatch.setattr(
+        processing_service,
+        "summarize",
+        lambda t: {
+            "title": "Tone Test",
+            "summary": "A tone.",
+            "key_decisions": ["Keep the tone"],
+            "action_items": [],
+            "open_questions": [],
+        },
+    )
 
     with TestClient(app, headers=_h(_token("e"))) as client:
         with wav.open("rb") as f:
-            r = client.post("/api/v1/meetings", files={"audio": ("meeting.wav", f, "audio/wav")},
-                            headers={"x-forwarded-for": "192.0.2.77"})
+            r = client.post(
+                "/api/v1/meetings",
+                files={"audio": ("meeting.wav", f, "audio/wav")},
+                headers={"x-forwarded-for": "192.0.2.77"},
+            )
         assert r.status_code == 201
         mid = r.json()["id"]
 

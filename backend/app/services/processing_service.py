@@ -6,7 +6,7 @@ crash, a lease expiry, or a provider rate-limit pause) resumes where it left
 off instead of redoing — and re-paying for — finished work.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from backend.app.core import config
@@ -61,7 +61,7 @@ _FOLLOW_MAX_WAIT_SECONDS = 300
 
 
 def _age_seconds(meeting: Meeting) -> float:
-    return (datetime.now(timezone.utc) - datetime.fromisoformat(meeting.created_at)).total_seconds()
+    return (datetime.now(UTC) - datetime.fromisoformat(meeting.created_at)).total_seconds()
 
 
 def release_audio(meeting: Meeting, *, force: bool = False) -> None:
@@ -101,14 +101,18 @@ def transcribe_recording_chunk(meeting_id: str, chunk: dict) -> list:
     piece's position in the recording) and delete its audio."""
     result = transcribe_file(chunk["audio_path"])
     segments = [
-        {"start": round(s["start"] + chunk["offset_seconds"], 2),
-         "end": round(s["end"] + chunk["offset_seconds"], 2),
-         "text": s["text"]}
+        {
+            "start": round(s["start"] + chunk["offset_seconds"], 2),
+            "end": round(s["end"] + chunk["offset_seconds"], 2),
+            "text": s["text"],
+        }
         for s in result["segments"]
     ]
     save_chunk_segments(meeting_id, chunk["seq"], segments)
-    add_usage(meeting_id, {"audio_seconds": result["duration"],
-                           "audio_sent_seconds": result.get("sent_seconds", result["duration"])})
+    add_usage(
+        meeting_id,
+        {"audio_seconds": result["duration"], "audio_sent_seconds": result.get("sent_seconds", result["duration"])},
+    )
     if not config.RETAIN_AUDIO and not chunk_audio_in_use(chunk["file_hash"]):
         Path(chunk["audio_path"]).unlink(missing_ok=True)
     return segments
@@ -123,7 +127,9 @@ def _assemble_recording(meeting: Meeting) -> None:
     set_stage(meeting.id, "transcribing")
     segments: list = []
     for chunk in chunks:
-        segments.extend(chunk["segments"] if chunk["status"] == "done" else transcribe_recording_chunk(meeting.id, chunk))
+        segments.extend(
+            chunk["segments"] if chunk["status"] == "done" else transcribe_recording_chunk(meeting.id, chunk)
+        )
     segments.sort(key=lambda s: s["start"])
     text = " ".join(s["text"] for s in segments).strip()
     save_transcript(meeting.id, text)
@@ -228,20 +234,21 @@ def _run(meeting: Meeting) -> None:
             if meeting.source == "recording":
                 _assemble_recording(meeting)
             else:
-                transcription = transcribe_file(
-                    meeting.audio_path, on_stage=lambda stage: set_stage(meeting_id, stage)
-                )
+                transcription = transcribe_file(meeting.audio_path, on_stage=lambda stage: set_stage(meeting_id, stage))
                 save_transcript(meeting_id, transcription["text"])
                 save_segments(meeting_id, transcription["segments"], transcription["duration"])
-                add_usage(meeting_id, {"audio_seconds": transcription["duration"],
-                                       "audio_sent_seconds": transcription.get("sent_seconds", transcription["duration"])})
+                add_usage(
+                    meeting_id,
+                    {
+                        "audio_seconds": transcription["duration"],
+                        "audio_sent_seconds": transcription.get("sent_seconds", transcription["duration"]),
+                    },
+                )
             meeting = get_meeting(meeting_id)
 
         transcript = meeting.transcript or ""
         if len(transcript.strip()) < _MIN_TRANSCRIPT_CHARS:
-            raise TranscriptionError(
-                "Transcript is too short to summarize — the audio may not contain any speech."
-            )
+            raise TranscriptionError("Transcript is too short to summarize — the audio may not contain any speech.")
 
         set_stage(meeting_id, "summarizing")
         with metering() as meter:
@@ -273,8 +280,11 @@ def _run(meeting: Meeting) -> None:
         log.info("processing completed id=%s", meeting_id)
     except ProviderBusyError as exc:
         if _age_seconds(meeting) > config.MAX_JOB_AGE_HOURS * 3600:
-            update_status(meeting_id, MeetingStatus.FAILED,
-                          error_message="The AI provider stayed at capacity for too long. Please try again later.")
+            update_status(
+                meeting_id,
+                MeetingStatus.FAILED,
+                error_message="The AI provider stayed at capacity for too long. Please try again later.",
+            )
             return
         delay = max(exc.retry_after, config.DEFER_SECONDS)
         log.warning("provider busy; deferring id=%s for %.0fs: %s", meeting_id, delay, exc)

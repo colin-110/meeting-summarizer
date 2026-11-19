@@ -43,6 +43,7 @@ def app(tmp_path, monkeypatch):
 
 # ---- shared provider budget ----
 
+
 def test_budget_waits_for_room_then_settles_to_real_usage(monkeypatch):
     sleeps = []
     clock = [1000.0]
@@ -71,6 +72,7 @@ def test_budget_gives_up_with_provider_busy(monkeypatch):
 
 # ---- provider busy -> job deferred, not failed ----
 
+
 def test_provider_busy_defers_job_and_keeps_audio(tmp_path, monkeypatch):
     audio = tmp_path / "a.mp3"
     audio.write_bytes(b"audio")
@@ -94,25 +96,29 @@ def test_provider_busy_defers_job_and_keeps_audio(tmp_path, monkeypatch):
 def test_job_stuck_on_quota_for_too_long_fails(monkeypatch):
     m = create_meeting("a.mp3", "h1", "x")
     monkeypatch.setattr(config, "MAX_JOB_AGE_HOURS", 0)
-    monkeypatch.setattr(processing_service, "transcribe_file",
-                        lambda *a, **k: (_ for _ in ()).throw(ProviderBusyError("quota")))
+    monkeypatch.setattr(
+        processing_service, "transcribe_file", lambda *a, **k: (_ for _ in ()).throw(ProviderBusyError("quota"))
+    )
     processing_service.run(m.id)
     assert get_meeting(m.id).status == MeetingStatus.FAILED
 
 
 # ---- checkpoints ----
 
+
 def test_retry_skips_transcription_already_done(monkeypatch):
     m = create_meeting("a.mp3", "h1", "x")
     save_transcript(m.id, "a transcript that was saved before the crash happened")
-    monkeypatch.setattr(processing_service, "transcribe_file",
-                        lambda *a, **k: pytest.fail("re-transcribed finished audio"))
+    monkeypatch.setattr(
+        processing_service, "transcribe_file", lambda *a, **k: pytest.fail("re-transcribed finished audio")
+    )
     monkeypatch.setattr(processing_service, "summarize", lambda t: dict(NOTE, summary="done"))
     processing_service.run(m.id)
     assert get_meeting(m.id).summary == "done"
 
 
 # ---- long meetings ----
+
 
 def _segments(n, chars=100):
     return [{"start": i * 10.0, "end": i * 10.0 + 9, "text": f"s{i} " + "x" * chars} for i in range(n)]
@@ -137,10 +143,14 @@ def test_long_meeting_map_reduce_with_chapters_and_resume(monkeypatch):
 
     monkeypatch.setattr(summarization_service, "_structured_call", fake_call)
     saved = {}
-    result = summarization_service.summarize_long("t", _segments(10), cache={}, on_progress=saved.update, client=object())
+    result = summarization_service.summarize_long(
+        "t", _segments(10), cache={}, on_progress=saved.update, client=object()
+    )
 
     assert result["title"] == "Whole Meeting"
-    assert result["chapters"] == [{"title": f"Chapter {i}", "start": float(s)} for i, s in [(1, 0), (2, 30), (3, 60), (4, 90)]]
+    assert result["chapters"] == [
+        {"title": f"Chapter {i}", "start": float(s)} for i, s in [(1, 0), (2, 30), (3, 60), (4, 90)]
+    ]
     assert calls.count(config.SECTION_MODEL) == 4 and calls[-1] == config.SUMMARY_MODEL
 
     calls.clear()
@@ -169,8 +179,9 @@ def test_pipeline_routes_long_transcripts_to_sections(monkeypatch):
     save_transcript(m.id, " ".join(s["text"] for s in segs))
     save_segments(m.id, segs, 29.0)
     monkeypatch.setattr(processing_service, "summarize", lambda t: pytest.fail("used single pass"))
-    monkeypatch.setattr(processing_service, "summarize_long",
-                        lambda *a, **k: dict(NOTE, chapters=[{"title": "Intro", "start": 0.0}]))
+    monkeypatch.setattr(
+        processing_service, "summarize_long", lambda *a, **k: dict(NOTE, chapters=[{"title": "Intro", "start": 0.0}])
+    )
     processing_service.run(m.id)
     done = get_meeting(m.id)
     assert done.status == MeetingStatus.COMPLETED and done.chapters == [{"title": "Intro", "start": 0.0}]
@@ -195,16 +206,22 @@ def test_structured_call_retries_with_low_effort_when_output_truncated(monkeypat
 
 # ---- live recording ----
 
+
 def test_live_recording_flow(app, monkeypatch):
     transcribed = []
 
     def fake_transcribe(path, **kw):
         transcribed.append(path)
-        return {"text": "hello there everyone", "segments": [{"start": 1.0, "end": 3.0, "text": "hello there everyone"}],
-                "duration": 3.0}
+        return {
+            "text": "hello there everyone",
+            "segments": [{"start": 1.0, "end": 3.0, "text": "hello there everyone"}],
+            "duration": 3.0,
+        }
 
     monkeypatch.setattr(processing_service, "transcribe_file", fake_transcribe)
-    piece = lambda n: ("piece.webm", io.BytesIO(b"\x1a\x45\xdf\xa3" + bytes([n]) * 64), "audio/webm")
+
+    def piece(n):
+        return ("piece.webm", io.BytesIO(b"\x1a\x45\xdf\xa3" + bytes([n]) * 64), "audio/webm")
 
     with TestClient(app, headers=H) as client:
         rid = client.post("/api/v1/recordings").json()["id"]
@@ -215,8 +232,12 @@ def test_live_recording_flow(app, monkeypatch):
         assert r0.json() == {"seq": 0, "transcribed": True} and r1.json()["transcribed"] and dup.json()["transcribed"]
         assert len(transcribed) == 2  # the retried piece wasn't transcribed twice
         assert client.post(f"/api/v1/recordings/{rid}/finish").json()["status"] == "QUEUED"
-        assert client.post(f"/api/v1/recordings/{rid}/chunks", data={"seq": 2, "offset": 90},
-                           files={"audio": piece(3)}).status_code == 409  # finished: no more pieces
+        assert (
+            client.post(
+                f"/api/v1/recordings/{rid}/chunks", data={"seq": 2, "offset": 90}, files={"audio": piece(3)}
+            ).status_code
+            == 409
+        )  # finished: no more pieces
         other = client.post(f"/api/v1/recordings/{rid}/finish", headers={"X-Owner-Token": "o" * 32})
         assert other.status_code == 404
 
@@ -235,13 +256,20 @@ def test_live_piece_falls_back_to_worker_when_provider_busy(app, monkeypatch):
     def flaky(path, **kw):
         if state["busy"]:
             raise ProviderBusyError("quota")
-        return {"text": "late words", "segments": [{"start": 0.0, "end": 2.0, "text": "late words arriving after the pause"}], "duration": 2.0}
+        return {
+            "text": "late words",
+            "segments": [{"start": 0.0, "end": 2.0, "text": "late words arriving after the pause"}],
+            "duration": 2.0,
+        }
 
     monkeypatch.setattr(processing_service, "transcribe_file", flaky)
     with TestClient(app, headers=H) as client:
         rid = client.post("/api/v1/recordings").json()["id"]
-        r = client.post(f"/api/v1/recordings/{rid}/chunks", data={"seq": 0, "offset": 10},
-                        files={"audio": ("p.webm", io.BytesIO(b"\x1a\x45\xdf\xa3" + b"\x07" * 64), "audio/webm")})
+        r = client.post(
+            f"/api/v1/recordings/{rid}/chunks",
+            data={"seq": 0, "offset": 10},
+            files={"audio": ("p.webm", io.BytesIO(b"\x1a\x45\xdf\xa3" + b"\x07" * 64), "audio/webm")},
+        )
         assert r.json() == {"seq": 0, "transcribed": False}
         client.post(f"/api/v1/recordings/{rid}/finish")
 
@@ -255,13 +283,17 @@ def test_live_piece_falls_back_to_worker_when_provider_busy(app, monkeypatch):
 
 # ---- backpressure + metrics ----
 
+
 def test_backpressure_returns_503_when_queue_full(app, monkeypatch):
     monkeypatch.setattr(config, "MAX_QUEUE_DEPTH", 2)
     for i in range(2):
         update_status(create_meeting(f"{i}.mp3", f"q{i}", "x").id, MeetingStatus.QUEUED)
     with TestClient(app, headers=H) as client:
-        r = client.post("/api/v1/meetings", files={"audio": ("a.mp3", io.BytesIO(b"ID3" + b"\x00" * 50), "audio/mpeg")},
-                        headers={"x-forwarded-for": "192.0.2.200"})
+        r = client.post(
+            "/api/v1/meetings",
+            files={"audio": ("a.mp3", io.BytesIO(b"ID3" + b"\x00" * 50), "audio/mpeg")},
+            headers={"x-forwarded-for": "192.0.2.200"},
+        )
     assert r.status_code == 503 and r.headers["retry-after"] == "120"
 
 
@@ -277,9 +309,11 @@ def test_metrics_endpoint(app):
 
 # ---- standalone worker process ----
 
+
 def test_standalone_worker_process_drains_queue_and_stops_on_sigterm(tmp_path):
     db = tmp_path / "w.db"
     from backend.app.database.init_db import init_db
+
     init_db(db)
     ids = [create_meeting(f"{i}.mp3", f"w{i}", "x", db_path=db).id for i in range(3)]
     for i in ids:
@@ -314,8 +348,9 @@ def test_standalone_worker_process_drains_queue_and_stops_on_sigterm(tmp_path):
 
 def test_budget_reserves_expected_output_not_the_cap(monkeypatch):
     reserved = []
-    monkeypatch.setattr(summarization_service, "acquire_first_available",
-                        lambda keys, amount, **k: reserved.append(amount) or (0, 1))
+    monkeypatch.setattr(
+        summarization_service, "acquire_first_available", lambda keys, amount, **k: reserved.append(amount) or (0, 1)
+    )
     monkeypatch.setattr(summarization_service, "settle_budget", lambda *a, **k: None)
 
     class _C:

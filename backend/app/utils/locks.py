@@ -7,14 +7,14 @@ The lock expires on its own, so a crashed holder never blocks anyone for long.
 
 import time
 import uuid
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator, Optional
 
 from backend.app.database.connection import get_connection
 
 
-def try_acquire(name: str, ttl_seconds: float, db_path: Optional[Path] = None) -> Optional[str]:
+def try_acquire(name: str, ttl_seconds: float, db_path: Path | None = None) -> str | None:
     """Take the lock if it's free or expired. Returns a holder id, or None."""
     holder = uuid.uuid4().hex
     now = time.time()
@@ -34,7 +34,7 @@ def try_acquire(name: str, ttl_seconds: float, db_path: Optional[Path] = None) -
         conn.close()
 
 
-def release(name: str, holder: str, db_path: Optional[Path] = None) -> None:
+def release(name: str, holder: str, db_path: Path | None = None) -> None:
     conn = get_connection(db_path)
     try:
         conn.execute("DELETE FROM locks WHERE name = ? AND holder = ?", (name, holder))

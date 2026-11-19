@@ -61,10 +61,12 @@ class _LLM:
 
 # ---- model fallback ----
 
+
 def test_saturated_model_falls_back_to_the_second_models_budget(monkeypatch):
     monkeypatch.setattr(config, "FALLBACK_AFTER_SECONDS", 0)
-    rate_limit.acquire_budget(f"tokens:{config.SUMMARY_MODEL}", config.LLM_TOKENS_PER_MINUTE,
-                              limit=config.LLM_TOKENS_PER_MINUTE)
+    rate_limit.acquire_budget(
+        f"tokens:{config.SUMMARY_MODEL}", config.LLM_TOKENS_PER_MINUTE, limit=config.LLM_TOKENS_PER_MINUTE
+    )
     llm = _LLM()
     summarization_service._structured_call(llm, model=config.SUMMARY_MODEL, system="s", user="u", max_tokens=100)
     assert llm.models == [config.FALLBACK_MODEL]
@@ -78,11 +80,13 @@ def test_primary_model_used_while_it_has_room():
 
 def test_no_fallback_when_disabled(monkeypatch):
     monkeypatch.setattr(config, "FALLBACK_MODEL", "")
-    rate_limit.acquire_budget(f"tokens:{config.SUMMARY_MODEL}", config.LLM_TOKENS_PER_MINUTE,
-                              limit=config.LLM_TOKENS_PER_MINUTE)
+    rate_limit.acquire_budget(
+        f"tokens:{config.SUMMARY_MODEL}", config.LLM_TOKENS_PER_MINUTE, limit=config.LLM_TOKENS_PER_MINUTE
+    )
     with pytest.raises(summarization_service.ProviderBusyError):
-        summarization_service._structured_call(_LLM(), model=config.SUMMARY_MODEL, system="s", user="u",
-                                               max_tokens=100, max_wait=0)
+        summarization_service._structured_call(
+            _LLM(), model=config.SUMMARY_MODEL, system="s", user="u", max_tokens=100, max_wait=0
+        )
 
 
 def test_question_spills_over_to_the_other_model_then_reports_busy(app, monkeypatch):
@@ -116,12 +120,15 @@ def test_question_spills_over_to_the_other_model_then_reports_busy(app, monkeypa
 
 # ---- usage metering ----
 
+
 def test_metering_counts_tokens_per_model():
     with metering() as meter:
-        summarization_service._structured_call(_LLM(tokens=900), model="a", system="s", user="u", max_tokens=9,
-                                               allow_fallback=False)
-        summarization_service._structured_call(_LLM(tokens=100), model="b", system="s", user="u", max_tokens=9,
-                                               allow_fallback=False)
+        summarization_service._structured_call(
+            _LLM(tokens=900), model="a", system="s", user="u", max_tokens=9, allow_fallback=False
+        )
+        summarization_service._structured_call(
+            _LLM(tokens=100), model="b", system="s", user="u", max_tokens=9, allow_fallback=False
+        )
     assert meter == {"llm_tokens": 1000, "llm_calls": 2, "models": {"a": 900, "b": 100}}
 
 
@@ -132,8 +139,16 @@ def test_merge_usage_sums_numbers_and_nested_models():
 
 def test_pipeline_records_audio_and_token_usage(monkeypatch):
     m = create_meeting("a.mp3", "hu", "x")
-    monkeypatch.setattr(processing_service, "transcribe_file", lambda *a, **k: {
-        "text": "We agreed to ship on Friday after the review.", "segments": [], "duration": 90.0, "sent_seconds": 60.0})
+    monkeypatch.setattr(
+        processing_service,
+        "transcribe_file",
+        lambda *a, **k: {
+            "text": "We agreed to ship on Friday after the review.",
+            "segments": [],
+            "duration": 90.0,
+            "sent_seconds": 60.0,
+        },
+    )
     llm = _LLM(tokens=1700)
     monkeypatch.setattr(summarization_service, "Groq", lambda: llm)
     processing_service.run(m.id)
@@ -143,6 +158,7 @@ def test_pipeline_records_audio_and_token_usage(monkeypatch):
 
 
 # ---- answer cache ----
+
 
 def _completed(owner=OWNER, title="Hiring"):
     m = create_meeting("a.mp3", "h" + title, "gone", owner_id=owner)
@@ -203,6 +219,7 @@ def test_cache_is_per_owner_and_cleared_on_delete(app, monkeypatch):
 
 # ---- fair scheduling ----
 
+
 def _queued(owner, name, source="upload"):
     m = create_meeting(name, "h" + name, "x", owner_id=owner, source=source)
     update_status(m.id, MeetingStatus.QUEUED)
@@ -215,7 +232,7 @@ def test_one_owners_batch_does_not_starve_another_owner():
     a_jobs = [_queued(a, f"a{i}") for i in range(3)]
     b_job = _queued(b, "b0")
     assert claim_next() == a_jobs[0]  # oldest first while nobody is running
-    assert claim_next() == b_job      # a already has one running, b has none
+    assert claim_next() == b_job  # a already has one running, b has none
     assert claim_next() == a_jobs[1]
 
 
@@ -237,6 +254,7 @@ def test_owner_backlog_cap(app, monkeypatch):
 
 
 # ---- conditional GET ----
+
 
 def test_unchanged_meeting_is_answered_304(app):
     m = _completed()
@@ -260,12 +278,15 @@ def test_conditional_get_still_hides_other_owners_meetings(app):
 
 # ---- live pre-summaries ----
 
+
 def _recording_with_text(n_chunks, words_per_chunk=40):
     m = create_meeting("rec", "rec-h", "", owner_id=OWNER, source="recording", status=MeetingStatus.RECORDING)
     for seq in range(n_chunks):
         add_recording_chunk(m.id, seq, seq * 45.0, "", f"c{seq}")
-        segs = [{"start": seq * 45.0 + i, "end": seq * 45.0 + i + 1, "text": f"chunk {seq} word {i}"}
-                for i in range(words_per_chunk)]
+        segs = [
+            {"start": seq * 45.0 + i, "end": seq * 45.0 + i + 1, "text": f"chunk {seq} word {i}"}
+            for i in range(words_per_chunk)
+        ]
         save_chunk_segments(m.id, seq, segs)
     return m.id
 
@@ -274,8 +295,11 @@ def test_live_recording_presummarizes_final_sections_and_finish_reuses_them(monk
     monkeypatch.setattr(config, "SECTION_CHARS", 300)
     monkeypatch.setattr(config, "SINGLE_PASS_CHARS", 300)
     sections = []
-    monkeypatch.setattr(processing_service, "summarize_section",
-                        lambda i, text, **kw: sections.append(i) or dict(NOTE, title=f"Part {i + 1}"))
+    monkeypatch.setattr(
+        processing_service,
+        "summarize_section",
+        lambda i, text, **kw: sections.append(i) or dict(NOTE, title=f"Part {i + 1}"),
+    )
     mid = _recording_with_text(3)
 
     done = processing_service.presummarize_recording(mid)
@@ -284,8 +308,11 @@ def test_live_recording_presummarizes_final_sections_and_finish_reuses_them(monk
 
     # Stop: the worker only summarizes what wasn't done live, then merges.
     later = []
-    monkeypatch.setattr(summarization_service, "summarize_section",
-                        lambda i, text, **kw: later.append(i) or dict(NOTE, title=f"Part {i + 1}"))
+    monkeypatch.setattr(
+        summarization_service,
+        "summarize_section",
+        lambda i, text, **kw: later.append(i) or dict(NOTE, title=f"Part {i + 1}"),
+    )
     monkeypatch.setattr(summarization_service, "_merge", lambda client, notes: dict(NOTE, title="Whole"))
     monkeypatch.setattr(summarization_service, "Groq", lambda: object())
     update_status(mid, MeetingStatus.QUEUED)
@@ -337,6 +364,7 @@ def test_lock_expires_on_its_own():
 
 # ---- metrics ----
 
+
 def test_metrics_report_savings(app):
     m = create_meeting("a.mp3", "hm", "x")
     from backend.app.database.meetings_repo import add_usage
@@ -352,9 +380,8 @@ def test_metrics_report_savings(app):
 def test_forwarded_header_ignored_unless_behind_a_trusted_proxy(app, monkeypatch):
     from backend.app.api.meetings import _client_ip
 
-    req = type("R", (), {"headers": {"x-forwarded-for": "6.6.6.6"},
-                         "client": type("C", (), {"host": "10.0.0.1"})()})()
+    req = type("R", (), {"headers": {"x-forwarded-for": "6.6.6.6"}, "client": type("C", (), {"host": "10.0.0.1"})()})()
     monkeypatch.setattr(config, "TRUST_PROXY_HEADERS", False)
-    assert _client_ip(req) == "10.0.0.1"   # a client can't pick its own rate-limit bucket
+    assert _client_ip(req) == "10.0.0.1"  # a client can't pick its own rate-limit bucket
     monkeypatch.setattr(config, "TRUST_PROXY_HEADERS", True)
     assert _client_ip(req) == "6.6.6.6"

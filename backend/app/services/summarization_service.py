@@ -10,7 +10,7 @@ summarize(transcript) -> dict.
 
 import hashlib
 import json
-from typing import Callable, Optional
+from collections.abc import Callable
 
 from groq import APIConnectionError, Groq, InternalServerError, RateLimitError
 
@@ -18,8 +18,8 @@ from backend.app.core import config
 from backend.app.core.logging import get_logger
 from backend.app.utils.errors import ProviderBusyError, clean_provider_message, retry_after_seconds
 from backend.app.utils.rate_limit import acquire_first_available, settle_budget
-from backend.app.utils.usage import record_tokens
 from backend.app.utils.retry import call_with_retry
+from backend.app.utils.usage import record_tokens
 
 log = get_logger(__name__)
 
@@ -38,8 +38,7 @@ SUMMARY_SCHEMA = {
         "title": {
             "type": "string",
             "description": (
-                "A short (under 10 words), descriptive title for the meeting, "
-                "drawn from its actual content."
+                "A short (under 10 words), descriptive title for the meeting, drawn from its actual content."
             ),
         },
         "summary": {
@@ -50,8 +49,7 @@ SUMMARY_SCHEMA = {
             "type": "array",
             "items": {"type": "string"},
             "description": (
-                "Choices the group actually settled on — not options that were "
-                "discussed, and not questions left open."
+                "Choices the group actually settled on — not options that were discussed, and not questions left open."
             ),
         },
         "action_items": {
@@ -151,8 +149,7 @@ def _prepare_transcript(transcript: str) -> str:
         _MAX_TRANSCRIPT_CHARS,
     )
     return (
-        transcript[:_MAX_TRANSCRIPT_CHARS]
-        + "\n\n[Transcript truncated — the meeting exceeded the length this "
+        transcript[:_MAX_TRANSCRIPT_CHARS] + "\n\n[Transcript truncated — the meeting exceeded the length this "
         "summarizer processes in one pass.]"
     )
 
@@ -190,10 +187,10 @@ def _structured_call(
     system: str,
     user: str,
     max_tokens: int,
-    reasoning_effort: Optional[str] = None,
+    reasoning_effort: str | None = None,
     expected_output: int = 900,
     allow_fallback: bool = True,
-    max_wait: Optional[float] = None,
+    max_wait: float | None = None,
 ) -> dict:
     """One strict-JSON-schema call, held to the shared per-model token budget
     and settled with the real usage afterwards. If the model runs out of
@@ -206,14 +203,14 @@ def _structured_call(
     effort = reasoning_effort
     wait = config.PROVIDER_MAX_WAIT_SECONDS if max_wait is None else max_wait
     models = [model]
-    if allow_fallback and config.FALLBACK_MODEL and config.FALLBACK_MODEL != model:
+    if allow_fallback and config.FALLBACK_MODEL and model != config.FALLBACK_MODEL:
         models.append(config.FALLBACK_MODEL)
     for attempt in (1, 2):
         estimate = _estimate_tokens(system, user) + expected_output
         chosen, reservation = _reserve(models, estimate, wait)
         used = estimate
 
-        def _call():
+        def _call(chosen=chosen, effort=effort):
             kwargs = dict(
                 model=chosen,
                 temperature=0.2,
@@ -262,7 +259,7 @@ def _structured_call(
     raise SummarizationError("The model could not finish its answer within the output limit.")
 
 
-def summarize(transcript: str, *, client: Optional[Groq] = None) -> dict:
+def summarize(transcript: str, *, client: Groq | None = None) -> dict:
     """Summarize a transcript that fits in one call."""
     if not transcript or not transcript.strip():
         raise SummarizationError("Cannot summarize an empty transcript.")
@@ -335,7 +332,7 @@ def section_key(index: int, text: str) -> str:
     return f"{index}:{hashlib.sha256(text.encode()).hexdigest()[:16]}"
 
 
-def summarize_section(index: int, text: str, *, client=None, max_wait: Optional[float] = None) -> dict:
+def summarize_section(index: int, text: str, *, client=None, max_wait: float | None = None) -> dict:
     """Notes for one section of a long meeting. The prompt doesn't depend on
     how many sections there are, so a section summarized while a live
     recording is still going is reused as-is when the meeting ends."""
@@ -369,10 +366,10 @@ def summarize_long(
     transcript: str,
     segments: list,
     *,
-    cache: Optional[dict] = None,
-    on_progress: Optional[Callable[[dict], None]] = None,
-    on_stage: Optional[Callable[[str], None]] = None,
-    client: Optional[Groq] = None,
+    cache: dict | None = None,
+    on_progress: Callable[[dict], None] | None = None,
+    on_stage: Callable[[str], None] | None = None,
+    client: Groq | None = None,
 ) -> dict:
     """Summarize a long meeting within a per-minute token budget.
 
@@ -383,8 +380,8 @@ def summarize_long(
     """
     client = client or Groq()
     cache = dict(cache or {})
-    sections = split_sections(segments, config.SECTION_CHARS) if segments else _text_sections(
-        transcript, config.SECTION_CHARS
+    sections = (
+        split_sections(segments, config.SECTION_CHARS) if segments else _text_sections(transcript, config.SECTION_CHARS)
     )
     if not sections:
         raise SummarizationError("Cannot summarize an empty transcript.")
@@ -405,7 +402,7 @@ def summarize_long(
     result = _merge(client, notes)
     result["chapters"] = [
         {"title": note["title"], "start": section["start"]}
-        for note, section in zip(notes, sections)
+        for note, section in zip(notes, sections, strict=True)
         if section["start"] is not None
     ]
     return result
