@@ -1,10 +1,13 @@
 # Meeting Summarizer
 
+[![Tests](https://github.com/colin-110/meeting-summarizer/actions/workflows/tests.yml/badge.svg)](https://github.com/colin-110/meeting-summarizer/actions/workflows/tests.yml)
+[![Smoke test (production)](https://github.com/colin-110/meeting-summarizer/actions/workflows/smoke.yml/badge.svg)](https://github.com/colin-110/meeting-summarizer/actions/workflows/smoke.yml)
+
 Upload or record a meeting and get a timestamped transcript, a summary, decisions, action items and open questions — then search across all your meetings or ask questions about one.
 
 **Live app: https://meeting-summarizer-recorder.vercel.app**
 
-AI runs on Groq's free tier (Whisper + gpt-oss). The frontend is on Vercel; the API, workers and SQLite database run on one USD 5/month AWS Lightsail server.
+AI runs on Groq's free tier (Whisper + gpt-oss). The frontend is on Vercel; the API, workers and SQLite database run on one USD 5/month AWS Lightsail server, defined in CloudFormation. Tested at four levels — unit, real-browser, production smoke and load — on every push and daily against the live site.
 
 ## Features
 
@@ -74,6 +77,29 @@ ffmpeg comes with the `imageio-ffmpeg` package; nothing else to install.
 
 To run workers as their own processes: start the API with `RUN_WORKERS=false`, then run `python -m backend.app.worker` once per worker process.
 
+## Project structure
+
+~~~text
+backend/app/
+  main.py              FastAPI app; serves the API and the frontend
+  worker.py            standalone worker process (python -m backend.app.worker)
+  api/                 HTTP routes: meetings, recordings, ask, health, /metrics
+  services/            audio (ffmpeg), transcription, summarization, Q&A, queue workers
+  database/            SQLite schema, migrations, queries (queue, FTS5 search, caches)
+  utils/               shared rate limits and budgets, locks, retries, usage metering
+frontend/              plain HTML/CSS/JS; config.js says where the API is
+deploy/
+  lightsail.yaml       CloudFormation: server, static IP, firewall
+  setup.sh             installs or updates the app on the server
+tests/
+  test_*.py            unit and API tests
+  e2e/                 Playwright browser tests + the fake Groq client they use
+  smoke/               checks against the deployed site
+  load/                Locust load test
+  fixtures/            25 s public-domain speech clip (LibriVox)
+.github/workflows/     CI on every push; daily production smoke test
+~~~
+
 ## Testing
 
 Four layers, each catching what the one before can't:
@@ -108,7 +134,7 @@ Browser ─► Vercel (static frontend)
 ~~~
 
 - **Frontend:** Vercel serves `frontend/` and redeploys on every push to `main`. `frontend/config.js` points it at the API, and the server's `ALLOWED_ORIGINS` accepts only that origin.
-- **Server:** `deploy/lightsail.yaml` (CloudFormation) creates the instance, a static IP, and a firewall that opens only 80/443 to everyone and SSH to one IP.
+- **Server:** `deploy/lightsail.yaml` (CloudFormation) creates the instance, a static IP, and a firewall that opens only 80/443 to everyone and SSH to one IP (plus the Lightsail console's browser SSH). When your IP changes, re-run the `cloudformation deploy` line below with the new `SshCidr`.
 - **App:** `deploy/setup.sh` installs it on Ubuntu as a systemd service with Caddy for automatic HTTPS on an `sslip.io` name (no domain to buy) and 1 GB swap. It is safe to re-run; that's how a new version is deployed.
 - **Secrets:** the Groq key lives only in `/etc/meeting-summarizer/secrets.env` on the server.
 
@@ -125,7 +151,7 @@ ssh ubuntu@<ip> 'sudo bash /tmp/setup.sh <ip-with-dashes>.sslip.io https://<app>
 ssh ubuntu@<ip> 'echo "GROQ_API_KEY=..." | sudo tee /etc/meeting-summarizer/secrets.env >/dev/null && sudo systemctl restart meeting-summarizer'
 ~~~
 
-Deploy a new version: push to `main`, then re-run the `setup.sh` line.
+Deploy a new version: push to `main` (CI must be green), re-run the `setup.sh` line, then run the smoke tests (`pytest -m live`, or "Run workflow" on the smoke action).
 
 ## Build next
 
@@ -138,6 +164,7 @@ Deploy a new version: push to `main`, then re-run the `setup.sh` line.
 
 - **The free AI tier is the real ceiling, not the app.** Measured: a short meeting's summary uses ~1,700–2,300 tokens, so each model's 8,000 tokens/min allows about 4 short summaries a minute, roughly 8 with the fallback model. An hour-long meeting takes several minutes of budget (spread across the meeting when it's recorded live). The limiter queues work instead of failing.
 - **One machine.** SQLite scales to many processes on one VM, not across machines. Moving past one VM means Postgres.
+- **CPU credits.** The USD 5 plan guarantees 5% CPU and bursts above it: about 137 requests/s in bursts, around 20/s sustained (see the load test above).
 - **No accounts.** Privacy uses an anonymous browser token; clearing browser storage loses access to your meetings.
 - **No speaker labels.** Groq's Whisper doesn't identify speakers.
 - **Live pieces are cut on a timer**, not at pauses, so a word can occasionally be split at a 45-second boundary. Uploaded files are cut at pauses.
