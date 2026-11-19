@@ -72,11 +72,31 @@ uvicorn backend.app.main:app --reload
 
 ffmpeg comes with the `imageio-ffmpeg` package; nothing else to install.
 
-~~~bash
-pytest -v
-~~~
-
 To run workers as their own processes: start the API with `RUN_WORKERS=false`, then run `python -m backend.app.worker` once per worker process.
+
+## Testing
+
+Four layers, each catching what the one before can't:
+
+| Layer | What it checks | Run it |
+|---|---|---|
+| **Unit + API** (150 tests) | Services, queue, rate limits, budgets, API contracts, privacy, the worker process. Real ffmpeg and SQLite; the AI client is mocked. Fails under 90% branch coverage (currently 92%). | `pytest --cov` |
+| **Browser** (18 tests) | Real Chromium against the real server: upload, notes, ask (and the cache), ask across meetings, search, export, copy, delete, privacy between browsers, live recording with a fake microphone, phone/tablet/desktop layouts, no JS errors. Only the Groq network call is faked, so it's free and deterministic. | `playwright install chromium`<br>`pytest -m e2e --browser chromium` |
+| **Smoke** (12 tests) | The deployed site with the real AI: health, HTTPS redirect, CORS only for the frontend, a real 25 s clip transcribed and summarized, Q&A, export, another user gets 404, ETag/304. Cleans up after itself. Runs daily in CI. | `BASE_URL=https://3-7-91-183.sslip.io FRONTEND_URL=https://meeting-summarizer-recorder.vercel.app pytest -m live` |
+| **Load** | What browsers do most (status polling, opening meetings, search, the page) without spending AI quota. | `pip install locust`, then see `tests/load/locustfile.py` |
+
+Lint and formatting: `ruff check . && ruff format --check .`. CI runs lint, unit and browser tests on every push; Playwright traces of failed browser tests are kept as artifacts.
+
+**Load test on the live USD 5 server** (from India to Mumbai, 60 s each):
+
+| Users | Requests/s | Failures | p50 | p95 | p99 | Server CPU |
+|---|---|---|---|---|---|---|
+| 50 | 24 | 0 | 34 ms | 120 ms | 920 ms | ~5% |
+| 300 | 137 | 0 | 38 ms | 150 ms | 340 ms | ~34% |
+
+The app's memory stayed at 84 MB and it never restarted. The catch is CPU credits: the plan guarantees 5% CPU and bursts above it, so 137 requests/s holds for bursts, while sustained traffic would settle around 20 requests/s. The AI quota runs out long before either.
+
+The tests were checked against deliberate bugs: breaking three things in the frontend made 7 of the 18 browser tests fail.
 
 ## Deployment
 
@@ -124,4 +144,4 @@ Deploy a new version: push to `main`, then re-run the `setup.sh` line.
 
 ## Tech stack
 
-Python 3.12 · FastAPI · SQLite (WAL, FTS5) · ffmpeg · Groq Whisper and gpt-oss · plain HTML/CSS/JS · Pytest · GitHub Actions · Prometheus metrics · AWS Lightsail + CloudFormation · Caddy · Vercel
+Python 3.12 · FastAPI · SQLite (WAL, FTS5) · ffmpeg · Groq Whisper and gpt-oss · plain HTML/CSS/JS · Pytest, Playwright, Locust, Ruff · GitHub Actions · Prometheus metrics · AWS Lightsail + CloudFormation · Caddy · Vercel

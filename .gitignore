@@ -24,3 +24,7 @@ data/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Test artifacts (Playwright traces, coverage)
+test-results/
+.coverage

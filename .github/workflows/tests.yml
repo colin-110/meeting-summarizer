@@ -7,17 +7,44 @@ on:
     branches: [main]
 
 jobs:
-  pytest:
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+      - run: ruff check .
+      - run: ruff format --check .
 
-      - name: Install dependencies
-        run: pip install -r requirements-dev.txt
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+      # Fails if backend coverage drops below 90% (pyproject.toml).
+      - run: pytest --cov --cov-report=term
 
-      - name: Run tests
-        run: pytest -v
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+      - run: playwright install --with-deps chromium
+      - run: pytest -m e2e --browser chromium --tracing retain-on-failure
+      - name: Keep browser traces of failed tests
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: test-results/
